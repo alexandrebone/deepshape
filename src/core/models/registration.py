@@ -1,7 +1,7 @@
 ### Base ###
 import os
-import numpy as np 
-import torch 
+import numpy as np
+import torch
 import torch.nn as nn
 from torch.optim import Adam
 import fnmatch
@@ -9,18 +9,18 @@ from torch.utils.data import TensorDataset, DataLoader
 import itertools
 
 ### Visualization ###
-#import seaborn as sns
-#sns.set(color_codes=True)
+# import seaborn as sns
+# sns.set(color_codes=True)
 import matplotlib.mlab as mlab
 import matplotlib.pyplot as plt
 from matplotlib import rc
-#rc('text', usetex=True)
+
+
+# rc('text', usetex=True)
 # rc('font', **{'family':'serif','serif':['Palatino']})
-import pandas as pd
-import re
 
 
-def read_vtk_file(filename, dimension, extract_connectivity=False):
+def read_vtk_file(filename, dimension=None, extract_connectivity=False):
     """
     Routine to read  vtk files
     Probably needs new case management
@@ -37,6 +37,9 @@ def read_vtk_file(filename, dimension, extract_connectivity=False):
     points = []
     line_start_connectivity = None
     connectivity_type = nb_faces = nb_vertices_in_faces = None
+
+    if dimension is None:
+        dimension = DeformableObjectReader.__detect_dimension(content)
 
     assert isinstance(dimension, int)
     # logger.debug('Using dimension ' + str(dimension) + ' for file ' + filename)
@@ -173,6 +176,10 @@ def convolve(x, y, p, kernel_width):
     return torch.mm(torch.exp(-sq / (kernel_width ** 2)), p)
 
 
+def scalar_product(x, p1, p2, kernel_width):
+    return torch.sum(p2 * convolve(x, x, p1, kernel_width))
+
+
 def splat_current_on_grid(points, connectivity, grid, kernel_type='torch', kernel_width=1.):
     dimension = points.shape[1]
     centers, normals = compute_centers_and_normals(points, connectivity)
@@ -206,16 +213,32 @@ class fully_connected(nn.Module):
 
 
 class up(nn.Module):
-    def __init__(self, in_ch, out_ch):
+    def __init__(self, in_ch, out_ch, exit_ch=None):
         nn.Module.__init__(self)
         self.upsample = nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2, padding=0)
-        self.convolve = nn.Conv2d(2 * out_ch, out_ch, kernel_size=1, stride=1)
+        if exit_ch is None:
+            self.convolve = nn.Conv2d(2 * out_ch, out_ch, kernel_size=1, stride=1)
+        else:
+            self.convolve = nn.Conv2d(2 * out_ch, exit_ch, kernel_size=1, stride=1)
 
     def forward(self, x_, x):
         x = self.upsample(x)
         x = torch.cat([x_, x], dim=1)
         x = self.convolve(x)
         return x
+
+
+class up_(nn.Module):
+    def __init__(self, in_ch, out_ch, exit_ch=None):
+        nn.Module.__init__(self)
+        self.net = nn.Sequential(
+            nn.ConvTranspose2d(in_ch, out_ch, kernel_size=2, stride=2, padding=0),
+            # nn.LeakyReLU(negative_slope=0.2, inplace=True)
+            nn.Tanh()
+        )
+
+    def forward(self, x):
+        return self.net(x)
 
 
 class unet_voxelmorph(nn.Module):
@@ -226,6 +249,7 @@ class unet_voxelmorph(nn.Module):
     def __init__(self, grid_size):
         n = int(grid_size * 2 ** -4)
         nn.Module.__init__(self)
+        self.net = nn.Sequential()
         self.down1 = down(4, 16)
         self.down2 = down(16, 32)
         self.down3 = down(32, 32)
@@ -253,11 +277,68 @@ class unet_voxelmorph(nn.Module):
         return y0
 
 
-# return self.out_layer(y0)
+#        return self.out_layer(y0)
 
-def deform(points, grid, deformation_field, kernel_type='torch', kernel_width=1.):
+class unet_voxelmorph__output_8(nn.Module):
+    """
+    in: 32*32*4
+    """
+
+    def __init__(self, grid_size):
+        n = int(grid_size * 2 ** -4)
+        nn.Module.__init__(self)
+        self.down1 = down(4, 16)
+        self.down2 = down(16, 32)
+        self.down3 = down(32, 32)
+        self.down4 = down(32, 32)
+        self.fully_connected = fully_connected(32 * n * n, 32 * n * n)
+        self.up4 = up(32, 32)
+        self.up3 = up(32, 32, 2)
+        print('>> Net has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
+
+    def forward(self, x):
+        x0 = x
+        x1 = self.down1(x0)
+        x2 = self.down2(x1)
+        x3 = self.down3(x2)
+        x4 = self.down4(x3)
+        y4 = self.fully_connected(x4)
+        y3 = self.up4(x3, y4)
+        y2 = self.up3(x2, y3)
+        return y2
+
+
+class pseudo_autoencoder(nn.Module):
+    """
+    in: 32*32*4
+    """
+
+    def __init__(self, grid_size):
+        n = int(grid_size * 2 ** -4)
+        nn.Module.__init__(self)
+        self.down1 = down(4, 16)
+        self.down2 = down(16, 32)
+        self.down3 = down(32, 32)
+        self.down4 = down(32, 32)
+        self.fully_connected = fully_connected(32 * n * n, 32 * n * n)
+        self.up4 = up_(32, 16)
+        self.up3 = up_(16, 8)
+        print('>> Net has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
+
+    def forward(self, x):
+        x = self.down1(x)
+        x = self.down2(x)
+        x = self.down3(x)
+        x = self.down4(x)
+        x = self.fully_connected(x)
+        x = self.up4(x)
+        x = self.up3(x)
+        return x
+
+
+def deform(points, deformation_grid, deformation_field, kernel_type='torch', kernel_width=1.):
     dimension = points.size(1)
-    return points + convolve(points, grid.contiguous().view(-1, dimension),
+    return points + convolve(points, deformation_grid.contiguous().view(-1, dimension),
                              deformation_field.permute(1, 2, 0).contiguous().view(-1, dimension), kernel_width)
 
 
@@ -265,23 +346,33 @@ def compute_L2_attachment(points_1, points_2):
     return torch.sum((points_1.view(-1) - points_2.view(-1)) ** 2)
 
 
-def compute_loss(sources, targets, deformations,
-                 splatting_grid, kernel_type, kernel_width):
+def compute_attachment_loss(sources, targets, deformations,
+                            deformation_grid, kernel_type, kernel_width):
     loss = 0.0
     for (source, target, deformation) in zip(sources, targets, deformations):
-        deformed_source = deform(source, splatting_grid, deformation,
+        deformed_source = deform(source, deformation_grid, deformation,
                                  kernel_type=kernel_type, kernel_width=kernel_width)
         loss += compute_L2_attachment(deformed_source, target)
     return loss
 
 
+def compute_regularity_loss(deformations, deformation_grid, kernel_type, kernel_width):
+    dimension = deformations.size(1)
+    loss = 0.0
+    for deformation in deformations:
+        deformation = deformation.permute(1, 2, 0)
+        loss += scalar_product(deformation_grid.view(-1, dimension),
+                               deformation.view(-1, dimension), deformation.view(-1, dimension), kernel_width)
+    return loss
+
+
 def deform_and_write(sources, targets, deformations,
                      sources_, targets_,
-                     splatting_grid, kernel_type, kernel_width,
+                     deformation_grid, kernel_type, kernel_width,
                      prefix):
     for k, (source, source_, target, target_, deformation) in enumerate(
             zip(sources, sources_, targets, targets_, deformations)):
-        deformed_source = deform(source, splatting_grid, deformation,
+        deformed_source = deform(source, deformation_grid, deformation,
                                  kernel_type=kernel_type, kernel_width=kernel_width)
         write_mesh(prefix + '__%d__source' % k,
                    source.detach().cpu().numpy(), source_.detach().numpy())
@@ -293,14 +384,15 @@ def deform_and_write(sources, targets, deformations,
 
 def deform_and_plot(sources, targets, deformations,
                     sources_, targets_,
-                    splatting_grid, kernel_type, kernel_width,
+                    deformation_grid, splatting_grid, kernel_type, kernel_width,
                     prefix, suffix):
     for k, (source, source_, target, target_, deformation) in enumerate(
             zip(sources, sources_, targets, targets_, deformations)):
-        deformed_source = deform(source, splatting_grid, deformation, kernel_type=kernel_type,
+        deformed_source = deform(source, deformation_grid, deformation, kernel_type=kernel_type,
                                  kernel_width=kernel_width)
-        deformed_grid = deform(splatting_grid.view(-1, dimension), splatting_grid, deformation, kernel_type=kernel_type,
-                               kernel_width=kernel_width).view(grid_size, grid_size, dimension).detach().cpu().numpy()
+        deformed_grid = deform(splatting_grid.view(-1, dimension), deformation_grid, deformation,
+                               kernel_type=kernel_type, kernel_width=kernel_width).view(
+            splatting_grid.size()).detach().cpu().numpy()
 
         figsize = 7
         f, axes = plt.subplots(1, 2, figsize=(2 * figsize, figsize))
@@ -319,8 +411,12 @@ def deform_and_plot(sources, targets, deformations,
         ax.plot([g[:, :-1, 0].ravel(), g[:, 1:, 0].ravel()],
                 [g[:, :-1, 1].ravel(), g[:, 1:, 1].ravel()], 'k', linewidth=0.5)
 
-        ax.set_xlim((-2.4, 2.4))
-        ax.set_ylim((-2.4, 2.4))
+        g = deformation_grid.view(-1, dimension).detach().cpu().numpy()
+        m = deformation.permute(1, 2, 0).view(-1, dimension).detach().cpu().numpy()
+        ax.quiver(g[:, 0], g[:, 1], m[:, 0], m[:, 1])
+
+        ax.set_xlim((-2.6, 2.6))
+        ax.set_ylim((-2.6, 2.6))
 
         ### SECOND FIGURE ###
         ax = axes[1]
@@ -335,10 +431,11 @@ def deform_and_plot(sources, targets, deformations,
         ax.plot([p[c[:, 0]][:, 0], p[c[:, 1]][:, 0]],
                 [p[c[:, 0]][:, 1], p[c[:, 1]][:, 1]], 'tab:blue', linewidth=2)
 
-        ax.set_xlim((-2.4, 2.4))
-        ax.set_ylim((-2.4, 2.4))
+        ax.set_xlim((-2.6, 2.6))
+        ax.set_ylim((-2.6, 2.6))
         ax.grid()
 
+        #        plt.show()
         f.savefig('%s__%d__%s.pdf' % (prefix, k, suffix), bbox_inches='tight')
         plt.close(f)
 
@@ -423,58 +520,70 @@ path_to_starmen = os.path.normpath(os.path.join(os.path.dirname(__file__), '../.
 dimension = 2
 kernel_type = 'torch'
 kernel_width = 1.
-deformation_multiplier = 1e-6
 
-grid_size = 32
+deformation_multiplier = 1e-6
+regularity_tradeoff = 1e-1
+
+splatting_grid_size = 32
+deformation_grid_size = 8
 bounding_box = torch.from_numpy(np.array([[-2.5, 2.5], [-2.5, 2.5]]))
 
-device = 'cpu'
+device = 'gpu'
 
-experiment_prefix = '1'
+experiment_prefix = '4_pseudo_autoencoder'
 
-number_of_epochs = 5
+number_of_epochs = 1000
 print_every_n_iters = 1
-save_every_n_iters = 5
+save_every_n_iters = 100
 batch_size = 16
 
-splatting_grid = compute_grid(bounding_box, margin=0., grid_size=grid_size)
-number_of_train_pairs = 100
-number_of_test_pairs = 10
-
-(splats_train, sources_train, sources_train_, targets_train, targets_train_,
- splats_test,  sources_test,  sources_test_,  targets_test,  targets_test_) = create_paired_starmen_train_test_datasets(
-    path_to_starmen, number_of_train_pairs, number_of_test_pairs,
-    splatting_grid, dimension, random_seed=42)
-
+number_of_train_pairs = 1600
+number_of_test_pairs = 32
 
 ############################
 ######## INITIALIZE ########
 ############################
 
-output_dir = 'ouput__' + experiment_prefix
+splatting_grid = compute_grid(bounding_box, margin=0., grid_size=splatting_grid_size)
+deformation_grid = compute_grid(bounding_box, margin=0., grid_size=deformation_grid_size)
+
+(splats_train, sources_train, sources_train_, targets_train, targets_train_,
+ splats_test, sources_test, sources_test_, targets_test, targets_test_) = create_paired_starmen_train_test_datasets(
+    path_to_starmen, number_of_train_pairs, number_of_test_pairs,
+    splatting_grid, dimension, random_seed=42)
+
+output_dir = 'output__' + experiment_prefix
 if not os.path.isdir(output_dir):
     os.mkdir(output_dir)
-
 
 if (not torch.cuda.is_available()) and device == 'gpu':
     device = 'cpu'
     print('>> CUDA is not available. Overridding with device = "cpu".')
 
-
 ############################
 ###### TRAIN AND TEST ######
 ############################
 
-model = unet_voxelmorph(grid_size)
+# model = unet_voxelmorph(splatting_grid)
+# model = unet_voxelmorph__output_8(splatting_grid_size)
+model = pseudo_autoencoder(splatting_grid_size)
+
 optimizer = Adam(model.parameters(), lr=1e-3)
 
 if device == 'gpu':
-    model.cuda()
-    splatting_grid.cuda()
+    model = model.cuda()
+    splatting_grid = splatting_grid.cuda()
+    deformation_grid = deformation_grid.cuda()
+
+    splats_test = splats_test.cuda()
+    sources_test = sources_test.cuda()
+    targets_test = targets_test.cuda()
 
 for epoch in range(number_of_epochs + 1):
 
-    train_loss_current_epoch = 0.
+    train_attachment_loss = 0.
+    train_regularity_loss = 0.
+    train_total_loss = 0.
 
     ### TRAIN ###
     indexes = np.random.permutation(len(splats_train))
@@ -484,44 +593,77 @@ for epoch in range(number_of_epochs + 1):
         targets = targets_train[indexes[k * batch_size:(k + 1) * batch_size]]
 
         if device == 'gpu':
-            splats.cuda()
-            sources.cuda()
-            targets.cuda()
+            splats = splats.cuda()
+            sources = sources.cuda()
+            targets = targets.cuda()
 
         deformations = model(splats)
-        loss = compute_loss(
+
+        attachment_loss = compute_attachment_loss(
             sources, targets, deformations * deformation_multiplier,
-            splatting_grid=splatting_grid, kernel_type=kernel_type, kernel_width=kernel_width)
-        train_loss_current_epoch += loss.detach().cpu().numpy()
+            deformation_grid, kernel_type=kernel_type, kernel_width=kernel_width)
+        regularity_loss = compute_regularity_loss(
+            deformations * deformation_multiplier,
+            deformation_grid, kernel_type=kernel_type, kernel_width=kernel_width) * regularity_tradeoff
+        total_loss = attachment_loss + regularity_loss
+
+        train_attachment_loss += attachment_loss.detach().cpu().numpy()
+        train_regularity_loss += regularity_loss.detach().cpu().numpy()
+        train_total_loss += total_loss.detach().cpu().numpy()
 
         optimizer.zero_grad()
-        loss.backward()
+        total_loss.backward()
         optimizer.step()
 
-    train_loss_current_epoch /= float(batch_size * (number_of_train_pairs // batch_size))
+    train_attachment_loss /= float(batch_size * (number_of_train_pairs // batch_size))
+    train_regularity_loss /= float(batch_size * (number_of_train_pairs // batch_size))
+    train_total_loss /= float(batch_size * (number_of_train_pairs // batch_size))
 
     ### TEST ###
 
     deformations = model(splats_test)
-    loss = compute_loss(
+
+    attachment_loss = compute_attachment_loss(
         sources_test, targets_test, deformations * deformation_multiplier,
-        splatting_grid=splatting_grid, kernel_type=kernel_type, kernel_width=kernel_width)
-    test_loss_current_epoch = loss.detach().cpu().numpy() / float(number_of_test_pairs)
+        deformation_grid, kernel_type=kernel_type, kernel_width=kernel_width)
+    regularity_loss = compute_regularity_loss(
+        deformations * deformation_multiplier,
+        deformation_grid, kernel_type=kernel_type, kernel_width=kernel_width) * regularity_tradeoff
+    total_loss = attachment_loss + regularity_loss
+
+    test_attachment_loss = attachment_loss.detach().cpu().numpy() / float(number_of_test_pairs)
+    test_regularity_loss = regularity_loss.detach().cpu().numpy() / float(number_of_test_pairs)
+    test_total_loss = total_loss.detach().cpu().numpy() / float(number_of_test_pairs)
 
     if epoch % print_every_n_iters == 0:
-        print('[Epoch: %d]  Train loss = %.3f \t Test loss = %.3f' % (
-        epoch, train_loss_current_epoch, test_loss_current_epoch))
+        print('[Epoch: %d]'
+              '\nTrain loss = %.3f\t[attachment = %.3f ;\t regularity = %.3f]'
+              '\nTest  loss = %.3f\t[attachment = %.3f ;\t regularity = %.3f]' %
+              (epoch, train_total_loss, train_attachment_loss, train_regularity_loss,
+               test_total_loss, test_attachment_loss, test_regularity_loss))
 
     if epoch % save_every_n_iters == 0:
+        torch.save(model.state_dict(), os.path.join(output_dir, 'model__epoch_%d.pt' % epoch))
+
         n = 3
-        deform_and_plot(sources_train[:n], targets_train[:n], model(splats_train[:n]) * deformation_multiplier,
-                        sources_train_[:n], targets_train_[:n],
-                        splatting_grid, kernel_type, kernel_width,
-                        os.path.join(output_dir, 'train'),
-                        'epoch_%d' % epoch)
+
+        if device == 'gpu':
+            deform_and_plot(sources_train[:n].cuda(), targets_train[:n].cuda(),
+                            model(splats_train[:n].cuda()) * deformation_multiplier,
+                            sources_train_[:n].cuda(), targets_train_[:n].cuda(),
+                            deformation_grid, splatting_grid, kernel_type, kernel_width,
+                            os.path.join(output_dir, 'train'),
+                            'epoch_%d' % epoch)
+        else:
+            deform_and_plot(sources_train[:n], targets_train[:n],
+                            model(splats_train[:n]) * deformation_multiplier,
+                            sources_train_[:n], targets_train_[:n],
+                            deformation_grid.cpu(), splatting_grid.cpu(), kernel_type, kernel_width,
+                            os.path.join(output_dir, 'train'),
+                            'epoch_%d' % epoch)
 
         deform_and_plot(sources_test[:n], targets_test[:n], model(splats_test[:n]) * deformation_multiplier,
                         sources_test_[:n], targets_test_[:n],
-                        splatting_grid, kernel_type, kernel_width,
+                        deformation_grid, splatting_grid, kernel_type, kernel_width,
                         os.path.join(output_dir, 'test'),
                         'epoch_%d' % epoch)
