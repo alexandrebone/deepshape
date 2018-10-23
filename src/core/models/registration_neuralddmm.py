@@ -11,9 +11,9 @@ import itertools
 ### Visualization ###
 # import seaborn as sns
 # sns.set(color_codes=True)
-import matplotlib.mlab as mlab
-import matplotlib.pyplot as plt
-from matplotlib import rc
+# import matplotlib.mlab as mlab
+# import matplotlib.pyplot as plt
+# from matplotlib import rc
 
 # rc('text', usetex=True)
 # rc('font', **{'family': 'serif', 'serif': ['Palatino']})
@@ -311,10 +311,15 @@ def bilinear_interpolation(velocity, points, bounding_box, grid_size, device='cp
     gu = (u1 + 1 - u).view(nb_of_points, 1).expand(nb_of_points, dimension)
     gv = (v1 + 1 - v).view(nb_of_points, 1).expand(nb_of_points, dimension)
 
-    velocity_on_points = (velocity[u1.long(), v1.long()] * gu * gv +
-                          velocity[u1.long(), v2.long()] * gu * fv +
-                          velocity[u2.long(), v1.long()] * fu * gv +
-                          velocity[u2.long(), v2.long()] * fu * fv)
+    u1 = u1.long()
+    v1 = v1.long()
+    u2 = u2.long()
+    v2 = v2.long()
+
+    velocity_on_points = (velocity[u1, v1] * gu * gv +
+                          velocity[u1, v2] * gu * fv +
+                          velocity[u2, v1] * fu * gv +
+                          velocity[u2, v2] * fu * fv)
     return velocity_on_points
 
 
@@ -507,9 +512,9 @@ bounding_box_visualization = torch.from_numpy(np.array([[-2., 2.], [-2., 2.]])).
 
 device = 'cuda'
 
-experiment_prefix = '7__bilinear_interpolation__real_hamiltionian__norm_trick'
+experiment_prefix = '9__convolutive_interpolation__real_hamiltionian_light__norm_trick__benchmark'
 
-number_of_epochs = 500
+number_of_epochs = 10
 print_every_n_iters = 1
 save_every_n_iters = 100
 batch_size = 32
@@ -624,8 +629,8 @@ for epoch in range(number_of_epochs + 1):
         deformed_sources = sources.clone()
         for vs in v_t:
             for p, v in zip(deformed_sources, vs):
-                # p += convolutive_interpolation(v.permute(1, 2, 0), p, deformation_grid, kernel_width=kernel_width)
-                p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
+                p += convolutive_interpolation(v.permute(1, 2, 0), p, deformation_grid, kernel_width=kernel_width)
+                # p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
 
         # LOSS
         loss = compute_loss(deformed_sources, targets)
@@ -683,8 +688,8 @@ for epoch in range(number_of_epochs + 1):
     deformed_sources = sources.clone()
     for vs in v_t:
         for p, v in zip(deformed_sources, vs):
-            # p += convolutive_interpolation(v.permute(1, 2, 0), p, deformation_grid, kernel_width=kernel_width)
-            p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
+            p += convolutive_interpolation(v.permute(1, 2, 0), p, deformation_grid, kernel_width=kernel_width)
+            # p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
 
     # LOSS
     loss = compute_loss(deformed_sources, targets)
@@ -698,7 +703,7 @@ for epoch in range(number_of_epochs + 1):
     if epoch % print_every_n_iters == 0:
         log = cprint('[Epoch: %d]  Train loss = %.3f \t Test loss = %.3f' % (epoch, train_loss_current_epoch, test_loss_current_epoch), log)
 
-    if epoch % save_every_n_iters == 0:
+    if False and epoch % save_every_n_iters == 0:
 
         with open(os.path.join(output_dir, 'log.txt'), 'w') as f:
             f.write(log)
@@ -741,10 +746,10 @@ for epoch in range(number_of_epochs + 1):
         deformed_grids = visualization_grid.clone().view(1, -1, dimension).repeat(n, 1, 1)
         for j, vs in enumerate(v_t):
             for p, g, v in zip(deformed_sources, deformed_grids, vs):
-                # p += convolutive_interpolation(v.permute(1, 2, 0), p, deformation_grid, kernel_width=kernel_width)
-                # g += convolutive_interpolation(v.permute(1, 2, 0), g, deformation_grid, kernel_width=kernel_width)
-                p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
-                g += bilinear_interpolation(v.permute(1, 2, 0), g, bounding_box, deformation_grid_size, device=device)
+                p += convolutive_interpolation(v.permute(1, 2, 0), p, deformation_grid, kernel_width=kernel_width)
+                g += convolutive_interpolation(v.permute(1, 2, 0), g, deformation_grid, kernel_width=kernel_width)
+                # p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
+                # g += bilinear_interpolation(v.permute(1, 2, 0), g, bounding_box, deformation_grid_size, device=device)
             # plot_registrations(sources, targets, sources_, targets_,
             #                    deformed_sources,
             #                    deformed_grids.view(n, visualization_grid_size, visualization_grid_size, dimension),
@@ -794,10 +799,10 @@ for epoch in range(number_of_epochs + 1):
         deformed_grids = visualization_grid.clone().view(1, -1, dimension).repeat(n, 1, 1)
         for j, vs in enumerate(v_t):
             for p, g, v in zip(deformed_sources, deformed_grids, vs):
-                # p += convolutive_interpolation(v.permute(1, 2, 0), p, deformation_grid, kernel_width=kernel_width)
-                # g += convolutive_interpolation(v.permute(1, 2, 0), g, deformation_grid, kernel_width=kernel_width)
-                p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
-                g += bilinear_interpolation(v.permute(1, 2, 0), g, bounding_box, deformation_grid_size, device=device)
+                p += convolutive_interpolation(v.permute(1, 2, 0), p, deformation_grid, kernel_width=kernel_width)
+                g += convolutive_interpolation(v.permute(1, 2, 0), g, deformation_grid, kernel_width=kernel_width)
+                # p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
+                # g += bilinear_interpolation(v.permute(1, 2, 0), g, bounding_box, deformation_grid_size, device=device)
             # plot_registrations(sources, targets, sources_, targets_,
             #                    deformed_sources,
             #                    deformed_grids.view(n, visualization_grid_size, visualization_grid_size, dimension),
