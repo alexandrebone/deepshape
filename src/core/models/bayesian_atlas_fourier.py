@@ -214,7 +214,7 @@ def compute_grid(bounding_box, margin=0.1, grid_size=64):
     return torch.from_numpy(grid).float()
 
 
-def bilinear_interpolation(velocity, points, bounding_box, grid_size, device='cpu'):
+def bilinear_interpolation(velocity, points, bounding_box, grid_size):
     nb_of_points = points.size(0)
     dimension = points.size(1)
 
@@ -437,31 +437,26 @@ class BayesianAtlas(nn.Module):
     def forward(self, q, with_regularity_loss=False):
 
         # DECODE
-        w_t = []
         v_t = []
         for t in range(self.number_of_time_points - 1):
-            x = self.decoder(q * (t + 1) * self.dt)
-            w = torch.stack((x + torch.flip(x, [2, 3]), x - torch.flip(x, [2, 3])), dim=4)
-            v = torch.irfft(w, 2, onesided=False).permute(0, 2, 3, 1)
-            w_t.append(w)
-            v_t.append(v)
+            v_t.append(self.decoder(q * (t + 1) * self.dt))
 
         # FLOW
         deformed_template_points = self.template_points.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
         for vs in v_t:
             for p, v in zip(deformed_template_points, vs):
                 # p += convolutive_interpolation(v, p, deformation_grid, self.deformation_kernel_width)
-                p += bilinear_interpolation(v, p, bounding_box, deformation_grid_size, device=str(q.device))
+                p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size)
 
         # SOBOLEV REGULARITY
         if with_regularity_loss:
             alpha = 3.
             s = 3.
-            w_t = torch.stack(w_t)
+            w_t = torch.rfft(torch.stack(v_t), dimension, onesided=False)
             L = torch.stack(torch.meshgrid([torch.arange(self.deformation_grid_size),
                                             torch.arange(self.deformation_grid_size)])).type(str(w_t.type()))
             L = (- 2 * alpha * (torch.sum(torch.cos(
-                (2.0 * 3.14159 / float(self.deformation_grid_size - 1)) * L), dim=0) - dimension) + 1) ** s
+                (2.0 * 3.14159 / float(self.deformation_grid_size )) * L), dim=0) - dimension) + 1) ** s
             L = L.view(1, 1, 1, self.deformation_grid_size, self.deformation_grid_size, 1).expand(w_t.size())
             sobolev_regularity = torch.sum(L * w_t ** 2)
             return deformed_template_points, sobolev_regularity
@@ -480,11 +475,7 @@ class BayesianAtlas(nn.Module):
         # DECODE
         v_t = []
         for t in range(self.number_of_time_points - 1):
-            x = self.decoder(q * (t + 1) * self.dt)
-            w = torch.stack((x + torch.flip(x, [2, 3]), x - torch.flip(x, [2, 3])), dim=4)
-            v = torch.irfft(w, 2, onesided=False).permute(0, 2, 3, 1)
-            v_t.append(v)
-        v_t = torch.stack(v_t)
+            v_t.append(self.decoder(q * (t + 1) * self.dt))
 
         # FLOW AND WRITE
         deformed_template_points = self.template_points.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
@@ -502,8 +493,8 @@ class BayesianAtlas(nn.Module):
             for p, g, v in zip(deformed_template_points, deformed_vizualisation_grids, vs):
                 # p += convolutive_interpolation(v, p, deformation_grid, self.deformation_kernel_width)
                 # g += convolutive_interpolation(v, g, deformation_grid, self.deformation_kernel_width)
-                p += bilinear_interpolation(v, p, bounding_box, deformation_grid_size, device=str(q.device))
-                g += bilinear_interpolation(v, g, bounding_box, deformation_grid_size, device=str(q.device))
+                p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size)
+                g += bilinear_interpolation(v.permute(1, 2, 0), g, bounding_box, deformation_grid_size)
 
             # plot_registrations(
             #     self.template_points.view(1, -1, dimension).expand(batch_size, -1, dimension), points,
@@ -519,7 +510,7 @@ class BayesianAtlas(nn.Module):
             self.template_connectivity.view(1, -1, dimension).expand(n, -1, dimension), connectivities,
             deformed_template_points,
             deformed_vizualisation_grids.view(batch_size, visualization_grid_size, visualization_grid_size, dimension),
-            deformation_grid, torch.mean(v_t, dim=0),
+            deformation_grid, torch.mean(torch.stack(v_t), dim=0),
             prefix, '')
 
 
@@ -646,10 +637,10 @@ for epoch in range(number_of_epochs + 1):
         attachment_loss = torch.sum((deformed_template_points - batch_target_points) ** 2) / noise_variance
         train_attachment_loss += attachment_loss.detach().cpu().numpy()
 
-        sobolev_regularity_loss *= lambda_ * 0.0
+        sobolev_regularity_loss *= lambda_
         train_sobolev_regularity_loss += sobolev_regularity_loss.detach().cpu().numpy()
 
-        kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp()) * 0.0
+        kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
         train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
         total_loss = attachment_loss + sobolev_regularity_loss + kullback_regularity_loss
@@ -724,7 +715,7 @@ for epoch in range(number_of_epochs + 1):
              train_total_loss, train_attachment_loss, train_sobolev_regularity_loss, train_kullback_regularity_loss,
              test_total_loss, test_attachment_loss, test_sobolev_regularity_loss, test_kullback_regularity_loss))
 
-    if epoch % save_every_n_iters == 0:
+    if epoch % save_every_n_iters == 0 and not epoch == 0:
         with open(os.path.join(output_dir, 'log.txt'), 'w') as f:
             f.write(log)
 
