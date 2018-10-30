@@ -304,6 +304,57 @@ class Linear_Tanh(nn.Module):
     def forward(self, x):
         return self.net(x.view(-1, self.in_ch)).view(-1, self.out_ch)
 
+def plot_registrations(sources, targets,
+                       sources_, targets_,
+                       deformed_sources, deformed_grids,
+                       deformation_grid, deformation_fields,
+                       prefix, suffix):
+    for k, (source, source_, target, target_, deformed_source, deformed_grid, deformation_field) in enumerate(
+            zip(sources, sources_, targets, targets_, deformed_sources, deformed_grids, deformation_fields)):
+        figsize = 7
+        f, axes = plt.subplots(1, 2, figsize=(2 * figsize, figsize))
+
+        ### FIRST FIGURE ###
+        ax = axes[0]
+
+        p = source.detach().cpu().numpy()
+        c = source_.detach().cpu().numpy()
+        ax.plot([p[c[:, 0]][:, 0], p[c[:, 1]][:, 0]],
+                [p[c[:, 0]][:, 1], p[c[:, 1]][:, 1]], 'tab:blue', linewidth=2)
+
+        g = deformed_grid.detach().cpu().numpy()
+        ax.plot([g[:-1, :, 0].ravel(), g[1:, :, 0].ravel()],
+                [g[:-1, :, 1].ravel(), g[1:, :, 1].ravel()], 'k', linewidth=0.5)
+        ax.plot([g[:, :-1, 0].ravel(), g[:, 1:, 0].ravel()],
+                [g[:, :-1, 1].ravel(), g[:, 1:, 1].ravel()], 'k', linewidth=0.5)
+
+        g = deformation_grid.view(-1, dimension).detach().cpu().numpy()
+        m = deformation_field.permute(1, 2, 0).view(-1, dimension).detach().cpu().numpy()
+        ax.quiver(g[:, 0], g[:, 1], m[:, 0], m[:, 1])
+
+        ax.set_xlim((-2.6, 2.6))
+        ax.set_ylim((-2.6, 2.6))
+
+        ### SECOND FIGURE ###
+        ax = axes[1]
+
+        p = target.detach().cpu().numpy()
+        c = target_.detach().cpu().numpy()
+        ax.plot([p[c[:, 0]][:, 0], p[c[:, 1]][:, 0]],
+                [p[c[:, 0]][:, 1], p[c[:, 1]][:, 1]], 'tab:red', linewidth=2)
+
+        p = deformed_source.detach().cpu().numpy()
+        c = source_.detach().cpu().numpy()
+        ax.plot([p[c[:, 0]][:, 0], p[c[:, 1]][:, 0]],
+                [p[c[:, 0]][:, 1], p[c[:, 1]][:, 1]], 'tab:blue', linewidth=2)
+
+        ax.set_xlim((-2.6, 2.6))
+        ax.set_ylim((-2.6, 2.6))
+        ax.grid()
+
+        #        plt.show()
+        f.savefig('%s__subject_%d__%s.pdf' % (prefix, k, suffix), bbox_inches='tight')
+        plt.close(f)
 
 class Encoder(nn.Module):
     """
@@ -493,59 +544,6 @@ class BayesianAtlas(nn.Module):
             deformed_vizualisation_grids.view(batch_size, visualization_grid_size, visualization_grid_size, dimension),
             deformation_grid, v_t[0],
             prefix, '')
-
-
-def plot_registrations(sources, targets,
-                       sources_, targets_,
-                       deformed_sources, deformed_grids,
-                       deformation_grid, deformation_fields,
-                       prefix, suffix):
-    for k, (source, source_, target, target_, deformed_source, deformed_grid, deformation_field) in enumerate(
-            zip(sources, sources_, targets, targets_, deformed_sources, deformed_grids, deformation_fields)):
-        figsize = 7
-        f, axes = plt.subplots(1, 2, figsize=(2 * figsize, figsize))
-
-        ### FIRST FIGURE ###
-        ax = axes[0]
-
-        p = source.detach().cpu().numpy()
-        c = source_.detach().cpu().numpy()
-        ax.plot([p[c[:, 0]][:, 0], p[c[:, 1]][:, 0]],
-                [p[c[:, 0]][:, 1], p[c[:, 1]][:, 1]], 'tab:blue', linewidth=2)
-
-        g = deformed_grid.detach().cpu().numpy()
-        ax.plot([g[:-1, :, 0].ravel(), g[1:, :, 0].ravel()],
-                [g[:-1, :, 1].ravel(), g[1:, :, 1].ravel()], 'k', linewidth=0.5)
-        ax.plot([g[:, :-1, 0].ravel(), g[:, 1:, 0].ravel()],
-                [g[:, :-1, 1].ravel(), g[:, 1:, 1].ravel()], 'k', linewidth=0.5)
-
-        g = deformation_grid.view(-1, dimension).detach().cpu().numpy()
-        m = deformation_field.permute(1, 2, 0).view(-1, dimension).detach().cpu().numpy()
-        ax.quiver(g[:, 0], g[:, 1], m[:, 0], m[:, 1])
-
-        ax.set_xlim((-2.6, 2.6))
-        ax.set_ylim((-2.6, 2.6))
-
-        ### SECOND FIGURE ###
-        ax = axes[1]
-
-        p = target.detach().cpu().numpy()
-        c = target_.detach().cpu().numpy()
-        ax.plot([p[c[:, 0]][:, 0], p[c[:, 1]][:, 0]],
-                [p[c[:, 0]][:, 1], p[c[:, 1]][:, 1]], 'tab:red', linewidth=2)
-
-        p = deformed_source.detach().cpu().numpy()
-        c = source_.detach().cpu().numpy()
-        ax.plot([p[c[:, 0]][:, 0], p[c[:, 1]][:, 0]],
-                [p[c[:, 0]][:, 1], p[c[:, 1]][:, 1]], 'tab:blue', linewidth=2)
-
-        ax.set_xlim((-2.6, 2.6))
-        ax.set_ylim((-2.6, 2.6))
-        ax.grid()
-
-        #        plt.show()
-        f.savefig('%s__subject_%d__%s.pdf' % (prefix, k, suffix), bbox_inches='tight')
-        plt.close(f)
 
 
 ############################

@@ -437,6 +437,31 @@ class Hamiltonian(nn.Module):
         return x
 
 
+class HamiltonianMetric(nn.Module):
+    def __init__(self, latent_dimension_half, inner_dimension=None):
+        nn.Module.__init__(self)
+        self.latent_dimension_half = latent_dimension_half
+        if inner_dimension is None:
+            inner_dimension = latent_dimension_half
+        self.linear1 = Linear_Tanh(latent_dimension_half, inner_dimension)
+        self.linear2 = Linear_Tanh(inner_dimension, inner_dimension)
+        self.linear3 = Linear_Tanh(inner_dimension, int(latent_dimension_half * (latent_dimension_half + 1) / 2))
+        print('>> HamiltonianMetric has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.linear2(x)
+        x = self.linear3(x)
+        batch_size = x.size(0)
+        y = []
+        ones = torch.ones(self.latent_dimension_half, self.latent_dimension_half)
+        for k in range(batch_size):
+            u = torch.diagflat(x[k, :self.latent_dimension_half])
+            u[torch.triu(ones, diagonal=1) == 1] = x[k, self.latent_dimension_half:]
+            y.append(torch.mm(u.t(), u))
+        y = torch.stack(y)
+        return y
+
 def plot_registrations(sources, targets,
                        sources_, targets_,
                        deformed_sources, deformed_grids,
