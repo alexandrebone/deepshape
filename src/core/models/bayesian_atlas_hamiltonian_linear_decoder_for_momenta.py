@@ -7,8 +7,9 @@ import torch.nn as nn
 from torch.optim import Adam
 import fnmatch
 
+
 ### Visualization ###
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 
 
 def cprint(str):
@@ -245,6 +246,57 @@ def bilinear_interpolation(velocity, points, bounding_box, grid_size):
     return velocity_on_points
 
 
+def batched_index_select(input, dim, index):
+    """
+    :param input: B x * x ... x *
+    :param dim: 0 < scalar
+    :param index: B x M
+    """
+    views = [input.shape[0]] + [1 if i != dim else -1 for i in range(1, len(input.shape))]
+    expanse = list(input.shape)
+    expanse[0] = -1
+    expanse[dim] = -1
+    index = index.view(views).expand(expanse)
+    return torch.gather(input, dim, index)
+
+
+def batched_bilinear_interpolation(velocity, points, bounding_box, grid_size):
+    bts = points.size(0)
+    nbp = points.size(1)
+    dim = points.size(2)
+
+    x = points[:, :, 0]
+    y = points[:, :, 1]
+
+    u = (x - bounding_box[0, 0]) / (bounding_box[0, 1] - bounding_box[0, 0]) * (grid_size - 1)
+    v = (y - bounding_box[1, 0]) / (bounding_box[1, 1] - bounding_box[1, 0]) * (grid_size - 1)
+
+    u1 = torch.floor(u.detach())
+    v1 = torch.floor(v.detach())
+
+    u1 = torch.clamp(u1, 0, grid_size - 1)
+    v1 = torch.clamp(v1, 0, grid_size - 1)
+    u2 = torch.clamp(u1 + 1, 0, grid_size - 1)
+    v2 = torch.clamp(v1 + 1, 0, grid_size - 1)
+
+    fu = (u - u1).view(bts, nbp, 1).expand(bts, nbp, dim)
+    fv = (v - v1).view(bts, nbp, 1).expand(bts, nbp, dim)
+    gu = (u1 + 1 - u).view(bts, nbp, 1).expand(bts, nbp, dim)
+    gv = (v1 + 1 - v).view(bts, nbp, 1).expand(bts, nbp, dim)
+
+    u1 = u1.long()
+    v1 = v1.long()
+    u2 = u2.long()
+    v2 = v2.long()
+
+    velocity_on_points = (batched_index_select(velocity.view(bts, -1, 2), 1, u1 * grid_size + v1) * gu * gv +
+                          batched_index_select(velocity.view(bts, -1, 2), 1, u1 * grid_size + v2) * gu * fv +
+                          batched_index_select(velocity.view(bts, -1, 2), 1, u2 * grid_size + v1) * fu * gv +
+                          batched_index_select(velocity.view(bts, -1, 2), 1, u2 * grid_size + v2) * fu * fv)
+
+    return velocity_on_points
+
+
 def convolutive_interpolation(momenta, points, control_points, kernel_width):
     velocity_on_points = convolve(points, control_points, momenta, kernel_width)
     return velocity_on_points
@@ -302,10 +354,10 @@ class Linear_Tanh(nn.Module):
 def plot_registrations(sources, targets,
                        sources_, targets_,
                        deformed_sources, deformed_grids,
-                       control_points, momenta,
+                       deformation_grid, deformation_fields,
                        prefix, suffix):
-    for k, (source, source_, target, target_, deformed_source, deformed_grid, cp, mom) in enumerate(
-            zip(sources, sources_, targets, targets_, deformed_sources, deformed_grids, control_points, momenta)):
+    for k, (source, source_, target, target_, deformed_source, deformed_grid, deformation_field) in enumerate(
+            zip(sources, sources_, targets, targets_, deformed_sources, deformed_grids, deformation_fields)):
         figsize = 7
         f, axes = plt.subplots(1, 2, figsize=(2 * figsize, figsize))
 
@@ -323,10 +375,10 @@ def plot_registrations(sources, targets,
         ax.plot([g[:, :-1, 0].ravel(), g[:, 1:, 0].ravel()],
                 [g[:, :-1, 1].ravel(), g[:, 1:, 1].ravel()], 'k', linewidth=0.5)
 
-        c = cp.detach().cpu().numpy()
-        m = mom.detach().cpu().numpy()
+        g = deformation_grid.view(-1, dimension).detach().cpu().numpy()
+        m = deformation_field.view(-1, dimension).detach().cpu().numpy()
         if np.sum(m ** 2) > 0:
-            ax.quiver(c[:, 0], c[:, 1], m[:, 0], m[:, 1])
+            ax.quiver(g[:, 0], g[:, 1], m[:, 0], m[:, 1])
 
         ax.set_xlim((-2.6, 2.6))
         ax.set_ylim((-2.6, 2.6))
@@ -407,44 +459,24 @@ class HamiltonianMetric(nn.Module):
         return y
 
 
-class DecoderControlPoints(nn.Module):
+class Decoder(nn.Module):
     """
     in: latent_dimension
     out: out_grid_size * out_grid_size * 2
     """
 
-    def __init__(self, latent_dimension, initial_control_points):
+    def __init__(self, latent_dimension, deformation_grid_size, dimension=2):
         nn.Module.__init__(self)
-        self.initial_control_points = initial_control_points
-        self.number_of_control_points = initial_control_points.size(0)
-        self.dimension = initial_control_points.size(1)
+        self.deformation_grid_size = deformation_grid_size
+        self.dimension = dimension
         self.latent_dimension = latent_dimension
-        self.linear = nn.Linear(latent_dimension, self.number_of_control_points * self.dimension)
-        print('>> DecoderControlPoints has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
-
-    def forward(self, x):
-        x = self.linear(x).view(-1, self.number_of_control_points, self.dimension)
-        return 5e-2 * x + self.initial_control_points.view((1,) + self.initial_control_points.size()).expand(x.size())
-
-
-class DecoderMomenta(nn.Module):
-    """
-    in: latent_dimension
-    out: out_grid_size * out_grid_size * 2
-    """
-
-    def __init__(self, latent_dimension, initial_control_points):
-        nn.Module.__init__(self)
-        self.number_of_control_points = initial_control_points.size(0)
-        self.dimension = initial_control_points.size(1)
-        self.latent_dimension = latent_dimension
-        self.linear = nn.Linear(latent_dimension, self.number_of_control_points * self.dimension, bias=False)
-        print('>> DecoderMomenta has {} parameters'.format(
+        self.linear = nn.Linear(latent_dimension, deformation_grid_size ** 2 * self.dimension, bias=False)
+        print('>> Decoder has {} parameters'.format(
             sum([len(elt.view(-1)) for elt in self.parameters()])))
 
     def forward(self, x):
-        x = self.linear(x).view(-1, self.number_of_control_points, self.dimension)
-        return 5e-2 * x
+        x = self.linear(x).view(x.size(0), self.deformation_grid_size ** 2, self.dimension)
+        return 1e-3 * x
 
 
 class BayesianAtlas(nn.Module):
@@ -452,7 +484,7 @@ class BayesianAtlas(nn.Module):
     def __init__(self,
                  template_points, template_connectivity,
                  latent_dimension_half, splatting_grid_size, deformation_grid_size,
-                 deformation_kernel_width, number_of_time_points, initial_control_points):
+                 deformation_kernel_width, number_of_time_points):
         nn.Module.__init__(self)
 
         self.template_connectivity = template_connectivity
@@ -464,8 +496,7 @@ class BayesianAtlas(nn.Module):
         self.template_points = nn.Parameter(template_points)
         self.encoder = Encoder(splatting_grid_size, latent_dimension_half)
         self.hamiltonian_metric = HamiltonianMetric(latent_dimension_half)
-        self.decoder_control_points = DecoderControlPoints(latent_dimension_half, initial_control_points)
-        self.decoder_momenta = DecoderMomenta(latent_dimension_half, initial_control_points)
+        self.decoder = Decoder(latent_dimension_half, deformation_grid_size)
         print('>> BayesianAtlas has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
 
     def encode(self, observations):
@@ -488,19 +519,15 @@ class BayesianAtlas(nn.Module):
             q_t.append(q - self.dt * dh_dp)
 
         # DECODE
-        c_t = []
-        m_t = []
-        for (p, q) in zip(p_t, q_t):
-            c_t.append(self.decoder_control_points(p))
-            m_t.append(self.decoder_momenta(q))
+        v_t = []
+        for q in q_t:
+            v_t.append(self.decoder(q))
 
         # FLOW
-        deformed_template_points = self.template_points.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
-        for cs, ms in zip(c_t, m_t):
-            for p, c, m in zip(deformed_template_points, cs, ms):
-                p += convolutive_interpolation(m, p, c, self.deformation_kernel_width)
-                # p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
-        return deformed_template_points
+        x = self.template_points.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
+        for v in v_t:
+            x += batched_bilinear_interpolation(v, x, bounding_box, deformation_grid_size)
+        return x
 
     def write(self, splats, points, connectivities, vizualisation_grid, prefix):
 
@@ -524,15 +551,13 @@ class BayesianAtlas(nn.Module):
             q_t.append(q - self.dt * dh_dp)
 
         # DECODE
-        c_t = []
-        m_t = []
-        for (p, q) in zip(p_t, q_t):
-            c_t.append(self.decoder_control_points(p))
-            m_t.append(self.decoder_momenta(q))
+        v_t = []
+        for q in q_t:
+            v_t.append(self.decoder(q))
 
         # FLOW AND WRITE
-        deformed_template_points = self.template_points.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
-        deformed_vizualisation_grids = vizualisation_grid.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
+        x = self.template_points.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
+        g = vizualisation_grid.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
 
         # plot_registrations(
         #     self.template_points.view(1, -1, dimension).expand(batch_size, -1, dimension), points,
@@ -542,11 +567,9 @@ class BayesianAtlas(nn.Module):
         #     deformation_grid, v_t[0],
         #     prefix, 'j_%d' % (0))
 
-        for j, (cs, ms) in enumerate(zip(c_t, m_t)):
-            for p, g, c, m in zip(deformed_template_points, deformed_vizualisation_grids, cs, ms):
-                p += convolutive_interpolation(m, p, c, self.deformation_kernel_width)
-                g += convolutive_interpolation(m, g, c, self.deformation_kernel_width)
-                # p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
+        for j, v in enumerate(v_t):
+            x += batched_bilinear_interpolation(v, x, bounding_box, deformation_grid_size)
+            g += batched_bilinear_interpolation(v, g, bounding_box, deformation_grid_size)
 
             # plot_registrations(
             #     self.template_points.view(1, -1, dimension).expand(batch_size, -1, dimension), points,
@@ -560,9 +583,8 @@ class BayesianAtlas(nn.Module):
         plot_registrations(
             self.template_points.view(1, -1, dimension).expand(n, -1, dimension), points,
             self.template_connectivity.view(1, -1, dimension).expand(n, -1, dimension), connectivities,
-            deformed_template_points,
-            deformed_vizualisation_grids.view(batch_size, visualization_grid_size, visualization_grid_size, dimension),
-            torch.mean(torch.stack(c_t), dim=0), torch.mean(torch.stack(m_t), dim=0),
+            x, g.view(batch_size, visualization_grid_size, visualization_grid_size, dimension),
+            deformation_grid, torch.mean(torch.stack(v_t), dim=0),
             prefix, '')
 
 
@@ -570,13 +592,13 @@ class BayesianAtlas(nn.Module):
 ##### GLOBAL VARIABLES #####
 ############################
 
-experiment_prefix = '36_bayesian_atlas_hamiltonian_linear_decoder__debugged'
+experiment_prefix = '35_bayesian_atlas_hamiltonian_linear_decoder__reduced_dimension'
 
 # MODEL
 
 path_to_starmen = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data'))
-number_of_starmen_train = 16
-number_of_starmen_test = 16
+number_of_starmen_train = 32
+number_of_starmen_test = 32
 
 dimension = 2
 
@@ -595,15 +617,15 @@ number_of_time_points = 11
 
 # OPTIMIZATION
 
-number_of_epochs = 1000
+number_of_epochs = 2
 print_every_n_iters = 1
 save_every_n_iters = 100
 
-batch_size = 16
+batch_size = 32
 
 learning_rate = 1e-3
 
-device = 'cpu'
+device = 'cuda'
 
 ############################
 ######## INITIALIZE ########
@@ -635,12 +657,12 @@ if (not torch.cuda.is_available()) and device == 'cuda':
 ############################
 
 
-noise_variance = 0.01 ** 2
+noise_variance = 0.5 ** 2
 noise_dimension = points.size(1)
 
 model = BayesianAtlas(torch.mean(points, dim=0), connectivities[0],
                       latent_dimension_half, splatting_grid_size, deformation_grid_size,
-                      deformation_kernel_width, number_of_time_points, deformation_grid.view(-1, dimension))
+                      deformation_kernel_width, number_of_time_points)
 
 optimizer = Adam(model.parameters(), lr=learning_rate)
 
@@ -690,6 +712,7 @@ for epoch in range(number_of_epochs + 1):
         train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
         total_loss = attachment_loss + kullback_regularity_loss
+        # total_loss = attachment_loss
         train_total_loss += total_loss.detach().cpu().numpy()
 
         # GRADIENT STEP
@@ -697,7 +720,7 @@ for epoch in range(number_of_epochs + 1):
         total_loss.backward()
         optimizer.step()
 
-        # noise_variance *= float(attachment_loss.detach().cpu().numpy() / float(noise_dimension * batch_size))
+        noise_variance *= float(attachment_loss.detach().cpu().numpy() / float(noise_dimension * batch_size))
 
     train_attachment_loss /= float(batch_size * (number_of_starmen_train // batch_size))
     train_kullback_regularity_loss /= float(batch_size * (number_of_starmen_train // batch_size))
@@ -752,11 +775,11 @@ for epoch in range(number_of_epochs + 1):
              test_total_loss, test_attachment_loss, test_kullback_regularity_loss))
 
     if epoch % save_every_n_iters == 0 and not epoch == 0:
-    # if epoch % save_every_n_iters == 0:
+        # if epoch % save_every_n_iters == 0:
         with open(os.path.join(output_dir, 'log.txt'), 'w') as f:
             f.write(log)
 
-        n = 1
+        n = 3
         model.write(splats[:n].permute(0, 3, 1, 2), points[:n], connectivities[:n],
                     visualization_grid, os.path.join(output_dir, 'epoch_%d__train' % epoch))
         model.write(splats_test[:n].permute(0, 3, 1, 2), points_test[:n], connectivities_test[:n],

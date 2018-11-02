@@ -355,20 +355,22 @@ def plot_registrations(sources, targets,
 
 class Encoder(nn.Module):
     """
-    in: in_grid_size * in_grid_size * 2
-    out: latent_dimension
+    in: 2 * 32 * 32
+    out: 2 * 8 * 8
     """
 
-    def __init__(self, in_grid_size, latent_dimension_half):
+    def __init__(self):
         nn.Module.__init__(self)
-        n = int(in_grid_size * 2 ** -4)
-        self.latent_dimension_half = latent_dimension_half
         self.down1 = Conv2d_Tanh(2, 4)
         self.down2 = Conv2d_Tanh(4, 8)
-        self.down3 = Conv2d_Tanh(8, 16)
-        self.down4 = Conv2d_Tanh(16, 16)
-        self.linear_mean = nn.Linear(16 * n * n, latent_dimension_half)
-        self.linear_log_variance = nn.Linear(16 * n * n, latent_dimension_half)
+        self.down3 = Conv2d_Tanh(8, 8)
+        self.down4 = Conv2d_Tanh(8, 8)
+        self.down5 = Conv2d_Tanh(8, 16)
+        self.linear_mean = Linear_Tanh(16, 16)
+        self.linear_log_variance = Linear_Tanh(16, 16)
+        self.up5 = ConvTranspose2d_Tanh(16, 8)
+        self.up4 = ConvTranspose2d_Tanh(8, 4)
+        self.up3 = nn.ConvTranspose2d(4, 2, kernel_size=2, stride=2, padding=0, bias=True)
         print('>> Encoder has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
 
     def forward(self, x):
@@ -376,96 +378,81 @@ class Encoder(nn.Module):
         x = self.down2(x)
         x = self.down3(x)
         x = self.down4(x)
-        m = self.linear_mean(x.view(x.size(0), -1))
-        s = self.linear_log_variance(x.view(x.size(0), -1)) - 7
-        return m, s
+        x = self.down5(x)
+        m = self.linear_mean(x.view(x.size(0), -1)).view(x.size())
+        s = self.linear_log_variance(x.view(x.size(0), -1)).view(x.size())
+        m, s = self.up5(m), self.up5(s)
+        m, s = self.up4(m), self.up4(s)
+        m, s = self.up3(m), self.up3(s)
+        return (m.permute(0, 2, 3, 1).view(m.size(0), -1, dimension) * 1e-3,
+                s.permute(0, 2, 3, 1).view(m.size(0), -1, dimension) - 7)
 
 
-class HamiltonianMetric(nn.Module):
-    def __init__(self, latent_dimension_half, inner_dimension=None):
+class HamiltonianElementaryInteraction(nn.Module):
+    def __init__(self, inner_dimension=10):
         nn.Module.__init__(self)
-        self.latent_dimension_half = latent_dimension_half
-        if inner_dimension is None:
-            inner_dimension = latent_dimension_half
-        self.linear1 = Linear_Tanh(latent_dimension_half, inner_dimension)
+        self.linear1 = Linear_Tanh(2 * dimension, inner_dimension)
         self.linear2 = Linear_Tanh(inner_dimension, inner_dimension)
-        self.linear3 = Linear_Tanh(inner_dimension, int(latent_dimension_half * (latent_dimension_half + 1) / 2))
-        print('>> HamiltonianMetric has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
+        self.linear3 = nn.Linear(inner_dimension, dimension * (dimension + 1) // 2)
+        print('>> HamiltonianElementaryInteraction has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
 
-    def forward(self, x):
+    def forward(self, p_1, p_2):
+        return 0.5 * (self.forward_(torch.cat((p_1, p_2), dim=1)) + self.forward_(torch.cat((p_2, p_1), dim=1)))
+
+    def forward_(self, x):
         x = self.linear1(x)
         x = self.linear2(x)
         x = self.linear3(x)
-        batch_size = x.size(0)
-        y = []
-        ones = torch.ones(self.latent_dimension_half, self.latent_dimension_half)
-        for k in range(batch_size):
-            u = torch.diagflat(x[k, :self.latent_dimension_half])
-            u[torch.triu(ones, diagonal=1) == 1] = x[k, self.latent_dimension_half:]
-            y.append(torch.mm(u.t(), u))
-        y = torch.stack(y)
+        y = torch.zeros(x.size(0), dimension, dimension)
+        if dimension == 2:
+            y[:, 0, 1], y[:, 1, 0] = x[:, 0], x[:, 0]
+            y[:, 0, 0], y[:, 1, 1] = torch.exp(x[:, 1]), torch.exp(x[:, 2])
+        elif dimension == 3:
+            y[:, 0, 1], y[:, 1, 0] = x[:, 0], x[:, 0]
+            y[:, 0, 2], y[:, 2, 0] = x[:, 1], x[:, 1]
+            y[:, 1, 2], y[:, 2, 1] = x[:, 2], x[:, 2]
+            y[:, 0, 0], y[:, 1, 1], y[:, 2, 2] = torch.exp(x[:, 3]), torch.exp(x[:, 4]), torch.exp(x[:, 5])
+        else:
+            raise RuntimeError('Dimension must be 2 or 3.')
         return y
 
 
-class DecoderControlPoints(nn.Module):
-    """
-    in: latent_dimension
-    out: out_grid_size * out_grid_size * 2
-    """
-
-    def __init__(self, latent_dimension, initial_control_points):
-        nn.Module.__init__(self)
-        self.initial_control_points = initial_control_points
-        self.number_of_control_points = initial_control_points.size(0)
-        self.dimension = initial_control_points.size(1)
-        self.latent_dimension = latent_dimension
-        self.linear = nn.Linear(latent_dimension, self.number_of_control_points * self.dimension)
-        print('>> DecoderControlPoints has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
-
-    def forward(self, x):
-        x = self.linear(x).view(-1, self.number_of_control_points, self.dimension)
-        return 5e-2 * x + self.initial_control_points.view((1,) + self.initial_control_points.size()).expand(x.size())
-
-
-class DecoderMomenta(nn.Module):
-    """
-    in: latent_dimension
-    out: out_grid_size * out_grid_size * 2
-    """
-
-    def __init__(self, latent_dimension, initial_control_points):
-        nn.Module.__init__(self)
-        self.number_of_control_points = initial_control_points.size(0)
-        self.dimension = initial_control_points.size(1)
-        self.latent_dimension = latent_dimension
-        self.linear = nn.Linear(latent_dimension, self.number_of_control_points * self.dimension, bias=False)
-        print('>> DecoderMomenta has {} parameters'.format(
-            sum([len(elt.view(-1)) for elt in self.parameters()])))
-
-    def forward(self, x):
-        x = self.linear(x).view(-1, self.number_of_control_points, self.dimension)
-        return 5e-2 * x
+def compute_convolve_matrix(x, y, k):
+    bts = x.size(0)
+    nx = x.size(1)
+    ny = y.size(1)
+    dim = x.size(2)
+    assert bts == y.size(0) and dim == y.size(2)
+    x_ = x.unsqueeze(2).repeat(1, 1, ny, 1).view(bts * nx * ny, dim)
+    y_ = y.unsqueeze(1).repeat(1, nx, 1, 1).view(bts * nx * ny, dim)
+    K = k(x_, y_)
+    K_ = torch.zeros(bts, nx * dim, ny * dim)
+    index = 0
+    for b in range(bts):
+        for i in range(nx):
+            for j in range(ny):
+                K_[b, i * dim:(i + 1) * dim, j * dim:(j + 1) * dim] = K[index]
+                index += 1
+    return K_
 
 
 class BayesianAtlas(nn.Module):
 
-    def __init__(self,
-                 template_points, template_connectivity,
-                 latent_dimension_half, splatting_grid_size, deformation_grid_size,
-                 deformation_kernel_width, number_of_time_points, initial_control_points):
+    def __init__(self, template_points, template_connectivity, control_points, number_of_time_points):
         nn.Module.__init__(self)
 
         self.template_connectivity = template_connectivity
-        self.latent_dimension_half = latent_dimension_half
-        self.deformation_kernel_width = deformation_kernel_width
+        self.number_of_control_points = control_points.size(0)
+        self.dimension = control_points.size(1)
         self.number_of_time_points = number_of_time_points
         self.dt = 1. / float(number_of_time_points - 1)
 
         self.template_points = nn.Parameter(template_points)
-        self.encoder = Encoder(splatting_grid_size, latent_dimension_half)
-        self.hamiltonian_metric = HamiltonianMetric(latent_dimension_half)
-        self.decoder_control_points = DecoderControlPoints(latent_dimension_half, initial_control_points)
-        self.decoder_momenta = DecoderMomenta(latent_dimension_half, initial_control_points)
+        self.control_points = control_points
+
+        self.encoder = Encoder()
+        self.hamiltonian_interaction = HamiltonianElementaryInteraction(inner_dimension=10)
+
         print('>> BayesianAtlas has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
 
     def encode(self, observations):
@@ -474,95 +461,92 @@ class BayesianAtlas(nn.Module):
     def forward(self, q_0):
         device = str(q_0.device)
 
+        bts = q_0.size(0)
+        dim = self.dimension
+        ncp = self.number_of_control_points
+
         # SHOOT
-        p_t = [torch.zeros(batch_size, self.latent_dimension_half, device=device).requires_grad_()]
+        p_t = [self.control_points.clone().view(1, ncp, dimension).repeat(bts, 1, 1).requires_grad_()]
         q_t = [q_0]
         for t in range(self.number_of_time_points):
+            # print(t)
             p = p_t[t]
             q = q_t[t]
-            H = self.hamiltonian_metric(p)
-            dh_dq = torch.bmm(H, q.view(-1, latent_dimension_half, 1))[:, :, 0]
+            k = compute_convolve_matrix(p, p, self.hamiltonian_interaction)
+            dh_dq = torch.bmm(k, q.view(bts, ncp * dim, 1))[:, :, 0].view(bts, ncp, dim)
             h = 0.5 * torch.sum(q * dh_dq, dim=1)
             dh_dp = torch.autograd.grad([h], [p], [torch.ones(h.size(), device=device)], create_graph=True)[0]
             p_t.append(p + self.dt * dh_dq)
             q_t.append(q - self.dt * dh_dp)
 
-        # DECODE
-        c_t = []
-        m_t = []
-        for (p, q) in zip(p_t, q_t):
-            c_t.append(self.decoder_control_points(p))
-            m_t.append(self.decoder_momenta(q))
-
         # FLOW
-        deformed_template_points = self.template_points.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
-        for cs, ms in zip(c_t, m_t):
-            for p, c, m in zip(deformed_template_points, cs, ms):
-                p += convolutive_interpolation(m, p, c, self.deformation_kernel_width)
-                # p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
-        return deformed_template_points
+        x = self.template_points.clone().view(1, -1, dim).repeat(bts, 1, 1)
+        for p, q in zip(p_t, q_t):
+            k = compute_convolve_matrix(x, p, self.hamiltonian_interaction)
+            v = torch.bmm(k, q.view(bts, ncp * dim, 1))[:, :, 0].view(x.size())
+            x = x + self.dt * v
+
+        return x
 
     def write(self, splats, points, connectivities, vizualisation_grid, prefix):
 
         # INITIALIZE
-        batch_size = splats.size(0)
+        bts = splats.size(0)
+        dim = self.dimension
+        ncp = self.number_of_control_points
 
         # ENCODE
         q_0, _ = model.encode(splats)
+        q_0 = q_0.contiguous()
 
         # SHOOT
-        p_t = [torch.zeros(batch_size, self.latent_dimension_half, device=str(splats.device)).requires_grad_()]
+        p_t = [self.control_points.clone().view(1, ncp, dimension).repeat(bts, 1, 1).requires_grad_()]
         q_t = [q_0]
         for t in range(self.number_of_time_points):
+            # print(t)
             p = p_t[t]
             q = q_t[t]
-            H = self.hamiltonian_metric(p)
-            dh_dq = torch.bmm(H, q.view(-1, latent_dimension_half, 1))[:, :, 0]
+            k = compute_convolve_matrix(p, p, self.hamiltonian_interaction)
+            dh_dq = torch.bmm(k, q.view(bts, ncp * dim, 1))[:, :, 0].view(bts, ncp, dim)
             h = 0.5 * torch.sum(q * dh_dq, dim=1)
             dh_dp = torch.autograd.grad([h], [p], [torch.ones(h.size(), device=device)], create_graph=True)[0]
             p_t.append(p + self.dt * dh_dq)
             q_t.append(q - self.dt * dh_dp)
 
-        # DECODE
-        c_t = []
-        m_t = []
-        for (p, q) in zip(p_t, q_t):
-            c_t.append(self.decoder_control_points(p))
-            m_t.append(self.decoder_momenta(q))
-
-        # FLOW AND WRITE
-        deformed_template_points = self.template_points.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
-        deformed_vizualisation_grids = vizualisation_grid.clone().view(1, -1, dimension).repeat(batch_size, 1, 1)
-
         # plot_registrations(
-        #     self.template_points.view(1, -1, dimension).expand(batch_size, -1, dimension), points,
-        #     self.template_connectivity.view(1, -1, dimension).expand(batch_size, -1, dimension), connectivities,
+        #     self.template_points.view(1, -1, dimension).expand(bts, -1, dimension), points,
+        #     self.template_connectivity.view(1, -1, dimension).expand(bts, -1, dimension), connectivities,
         #     deformed_template_points,
-        #     deformed_vizualisation_grids.view(batch_size, visualization_grid_size, visualization_grid_size, dimension),
+        #     deformed_vizualisation_grids.view(bts, visualization_grid_size, visualization_grid_size, dimension),
         #     deformation_grid, v_t[0],
         #     prefix, 'j_%d' % (0))
 
-        for j, (cs, ms) in enumerate(zip(c_t, m_t)):
-            for p, g, c, m in zip(deformed_template_points, deformed_vizualisation_grids, cs, ms):
-                p += convolutive_interpolation(m, p, c, self.deformation_kernel_width)
-                g += convolutive_interpolation(m, g, c, self.deformation_kernel_width)
-                # p += bilinear_interpolation(v.permute(1, 2, 0), p, bounding_box, deformation_grid_size, device=device)
+        # FLOW AND WRITE
+        x = self.template_points.clone().view(1, -1, dim).repeat(bts, 1, 1)
+        g = vizualisation_grid.clone().view(1, -1, dimension).repeat(bts, 1, 1)
+        for p, q in zip(p_t, q_t):
+            k = compute_convolve_matrix(x, p, self.hamiltonian_interaction)
+            v = torch.bmm(k, q.view(bts, ncp * dim, 1))[:, :, 0].view(x.size())
+            x = x + self.dt * v
+
+            k = compute_convolve_matrix(g, p, self.hamiltonian_interaction)
+            v = torch.bmm(k, q.view(bts, ncp * dim, 1))[:, :, 0].view(g.size())
+            g = g + self.dt * v
 
             # plot_registrations(
-            #     self.template_points.view(1, -1, dimension).expand(batch_size, -1, dimension), points,
-            #     self.template_connectivity.view(1, -1, dimension).expand(batch_size, -1, dimension), connectivities,
+            #     self.template_points.view(1, -1, dimension).expand(bts, -1, dimension), points,
+            #     self.template_connectivity.view(1, -1, dimension).expand(bts, -1, dimension), connectivities,
             #     deformed_template_points,
-            #     deformed_vizualisation_grids.view(batch_size, visualization_grid_size, visualization_grid_size,
+            #     deformed_vizualisation_grids.view(bts, visualization_grid_size, visualization_grid_size,
             #                                       dimension),
             #     deformation_grid, vs,
             #     prefix, 'j_%d' % (j + 1))
 
         plot_registrations(
-            self.template_points.view(1, -1, dimension).expand(n, -1, dimension), points,
-            self.template_connectivity.view(1, -1, dimension).expand(n, -1, dimension), connectivities,
-            deformed_template_points,
-            deformed_vizualisation_grids.view(batch_size, visualization_grid_size, visualization_grid_size, dimension),
-            torch.mean(torch.stack(c_t), dim=0), torch.mean(torch.stack(m_t), dim=0),
+            self.template_points.view(1, -1, dimension).expand(bts, -1, dimension), points,
+            self.template_connectivity.view(1, -1, dimension).expand(bts, -1, dimension), connectivities,
+            x, g.view(bts, visualization_grid_size, visualization_grid_size, dimension),
+            torch.mean(torch.stack(p_t), dim=0), torch.mean(torch.stack(q_t), dim=0),
             prefix, '')
 
 
@@ -570,13 +554,13 @@ class BayesianAtlas(nn.Module):
 ##### GLOBAL VARIABLES #####
 ############################
 
-experiment_prefix = '36_bayesian_atlas_hamiltonian_linear_decoder__debugged'
+experiment_prefix = '31_bayesian_atlas_new_physics'
 
 # MODEL
 
 path_to_starmen = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data'))
-number_of_starmen_train = 16
-number_of_starmen_test = 16
+number_of_starmen_train = 1
+number_of_starmen_test = 2
 
 dimension = 2
 
@@ -591,15 +575,15 @@ deformation_grid_size = 8
 visualization_grid_size = 32
 
 latent_dimension_half = 5
-number_of_time_points = 11
+number_of_time_points = 6
 
 # OPTIMIZATION
 
 number_of_epochs = 1000
 print_every_n_iters = 1
-save_every_n_iters = 100
+save_every_n_iters = 10
 
-batch_size = 16
+batch_size = 1
 
 learning_rate = 1e-3
 
@@ -635,12 +619,11 @@ if (not torch.cuda.is_available()) and device == 'cuda':
 ############################
 
 
-noise_variance = 0.01 ** 2
+noise_variance = 0.5 ** 2
 noise_dimension = points.size(1)
 
 model = BayesianAtlas(torch.mean(points, dim=0), connectivities[0],
-                      latent_dimension_half, splatting_grid_size, deformation_grid_size,
-                      deformation_kernel_width, number_of_time_points, deformation_grid.view(-1, dimension))
+                      deformation_grid.view(-1, dimension), number_of_time_points)
 
 optimizer = Adam(model.parameters(), lr=learning_rate)
 
@@ -679,8 +662,8 @@ for epoch in range(number_of_epochs + 1):
 
         # ENCODE, DECODE AND SAMPLE
         means, log_variances = model.encode(batch_target_splats)
-        batch_latent_momenta = means + torch.zeros_like(means).normal_() * torch.exp(0.5 * log_variances)
-        deformed_template_points = model(batch_latent_momenta)
+        z = means + torch.zeros_like(means).normal_() * torch.exp(0.5 * log_variances)
+        deformed_template_points = model(z)
 
         # LOSS
         attachment_loss = torch.sum((deformed_template_points - batch_target_points) ** 2) / noise_variance
@@ -690,6 +673,7 @@ for epoch in range(number_of_epochs + 1):
         train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
         total_loss = attachment_loss + kullback_regularity_loss
+        # total_loss = attachment_loss
         train_total_loss += total_loss.detach().cpu().numpy()
 
         # GRADIENT STEP
@@ -697,7 +681,7 @@ for epoch in range(number_of_epochs + 1):
         total_loss.backward()
         optimizer.step()
 
-        # noise_variance *= float(attachment_loss.detach().cpu().numpy() / float(noise_dimension * batch_size))
+        noise_variance *= float(attachment_loss.detach().cpu().numpy() / float(noise_dimension * batch_size))
 
     train_attachment_loss /= float(batch_size * (number_of_starmen_train // batch_size))
     train_kullback_regularity_loss /= float(batch_size * (number_of_starmen_train // batch_size))
@@ -712,8 +696,9 @@ for epoch in range(number_of_epochs + 1):
     batch_target_splats = splats_test.permute(0, 3, 1, 2)
 
     # ENCODE, DECODE AND SAMPLE
-    batch_latent_momenta, log_variances = model.encode(batch_target_splats)
-    deformed_template_points = model(batch_latent_momenta)
+    means, log_variances = model.encode(batch_target_splats)
+    z = means.contiguous()
+    deformed_template_points = model(z)
 
     # LOSS
     attachment_loss = torch.sum((deformed_template_points - batch_target_points) ** 2) / noise_variance
