@@ -886,8 +886,7 @@ class BayesianAtlas(nn.Module):
             # self.decoder = DeepDecoder3d(latent_dimension, deformation_grid_size)
         else:
             raise RuntimeError
-        print('>> BayesianAtlas has {} parameters'.format(
-            sum([len(elt.view(-1)) for elt in self.parameters()]) + template_points.size(0) * template_points.size(1)))
+        print('>> BayesianAtlas has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
 
     def encode(self, observations):
         return self.encoder(observations)
@@ -895,42 +894,35 @@ class BayesianAtlas(nn.Module):
     def forward(self, q, with_regularity_loss=False):
 
         bts = q.size(0)
-        dgs = self.deformation_grid_size
-        ntp = self.number_of_time_points
 
         # DECODE
-        v_t = []
-        # dq0 = self.decoder(q * 0.0)
-        for t in range(self.number_of_time_points - 1):
-            v_t.append(self.decoder(q * (t + 1) * self.dt))
-            # dq1 = self.decoder(q * (t + 1) * self.dt)
-            # v_t.append((dq1 - dq0) / self.dt)
-            # dq0 = dq1
+        v = self.decoder(q)
 
         # FLOW
         x = self.template_points.clone().view(1, -1, self.dimension).repeat(bts, 1, 1)
-        for v in v_t:
+        for t in range(self.number_of_time_points - 1):
             x += batched_bilinear_interpolation(v, x, self.bounding_box, self.deformation_grid_size)
 
         # SOBOLEV REGULARITY
         if with_regularity_loss:
+            dgs = self.deformation_grid_size
             alpha = self.alpha
             s = 3.
-            w_t = torch.rfft(torch.stack(v_t), self.dimension, onesided=False)
+            w = torch.rfft(v, self.dimension, onesided=False)
 
             if self.dimension == 2:
-                L = torch.stack(torch.meshgrid([torch.arange(dgs), torch.arange(dgs)])).type(str(w_t.type()))
+                L = torch.stack(torch.meshgrid([torch.arange(dgs), torch.arange(dgs)])).type(str(w.type()))
                 L = (- 2 * alpha * (torch.sum(torch.cos(
                     (2.0 * math.pi / float(dgs)) * L), dim=0) - self.dimension) + 1) ** s
-                L = L.view(1, 1, 1, self.deformation_grid_size, self.deformation_grid_size, 1).expand(w_t.size())
+                L = L.view(1, 1, dgs, dgs, 1).expand(w.size())
             else:
                 L = torch.stack(torch.meshgrid([torch.arange(dgs), torch.arange(dgs),
-                                                torch.arange(dgs)])).type(str(w_t.type()))
+                                                torch.arange(dgs)])).type(str(w.type()))
                 L = (- 2 * alpha * (torch.sum(torch.cos(
                     (2.0 * math.pi / float(dgs)) * L), dim=0) - self.dimension) + 1) ** s
-                L = L.view(1, 1, 1, dgs, dgs, dgs, 1).expand(w_t.size())
+                L = L.view(1, 1, dgs, dgs, dgs, 1).expand(w.size())
 
-            sobolev_regularity = torch.sum(L * w_t ** 2) / float(ntp)
+            sobolev_regularity = torch.sum(L * w ** 2)
             return x, sobolev_regularity
 
         else:
@@ -950,13 +942,7 @@ class BayesianAtlas(nn.Module):
         q, _ = model.encode(splats)
 
         # DECODE
-        v_t = []
-        # dq0 = self.decoder(q * 0.0)
-        for t in range(self.number_of_time_points - 1):
-            v_t.append(self.decoder(q * (t + 1) * self.dt))
-            # dq1 = self.decoder(q * (t + 1) * self.dt)
-            # v_t.append((dq1 - dq0) / self.dt)
-            # dq0 = dq1
+        v = self.decoder(q)
 
         # FLOW AND WRITE
         x = self.template_points.clone().view(1, -1, self.dimension).repeat(batch_size, 1, 1)
@@ -969,7 +955,7 @@ class BayesianAtlas(nn.Module):
         #     deformation_grid, v_t[0].permute(0, 2, 3, 1),
         #     prefix, 'j_%d' % (0))
 
-        for j, v in enumerate(v_t):
+        for t in range(self.number_of_time_points - 1):
             x += batched_bilinear_interpolation(v.permute(0, 2, 3, 1), x, self.bounding_box, self.deformation_grid_size)
             g += batched_bilinear_interpolation(v.permute(0, 2, 3, 1), g, self.bounding_box, self.deformation_grid_size)
 
@@ -984,8 +970,7 @@ class BayesianAtlas(nn.Module):
             self.template_points.view(1, -1, self.dimension).expand(n, -1, self.dimension), points,
             self.template_connectivity.view(1, -1, self.dimension).expand(n, -1, self.dimension), connectivities,
             x, g.view(batch_size, visualization_grid_size, visualization_grid_size, self.dimension),
-            deformation_grid, torch.mean(torch.stack(v_t), dim=0).permute(0, 2, 3, 1),
-            prefix, '')
+            deformation_grid, v.permute(0, 2, 3, 1), prefix, '')
 
     def write_meshes(self, splats, points, connectivities, prefix):
 
@@ -996,29 +981,23 @@ class BayesianAtlas(nn.Module):
         q, _ = model.encode(splats)
 
         # DECODE
-        v_t = []
-        # dq0 = self.decoder(q * 0.0)
-        for t in range(self.number_of_time_points - 1):
-            v_t.append(self.decoder(q * (t + 1) * self.dt))
-            # dq1 = self.decoder(q * (t + 1) * self.dt)
-            # v_t.append((dq1 - dq0) / self.dt)
-            # dq0 = dq1
+        v = self.decoder(q)
 
         # FLOW AND WRITE
         x = self.template_points.clone().view(1, -1, self.dimension).repeat(batch_size, 1, 1)
 
         write_meshes(x.detach().cpu().numpy(), self.template_connectivity.detach().cpu().numpy(),
-                     prefix + '__', '__j_%d' % 0,
+                     prefix + '__', '__t_%d' % 0,
                      targets=[(elt_p.detach().cpu().numpy(), elt_c.detach().cpu().numpy())
                               for elt_p, elt_c in zip(points, connectivities)])
 
-        for j, v in enumerate(v_t):
+        for t in range(self.number_of_time_points - 1):
             x += batched_bilinear_interpolation(v, x, self.bounding_box, self.deformation_grid_size)
 
             write_meshes(x.detach().cpu().numpy(), self.template_connectivity.detach().cpu().numpy(),
-                         prefix + '__', '__j_%d' % (j + 1))
-            write_deformations(v, self.deformation_grid.detach().cpu().numpy(),
-                               prefix + '__', '__vfield__j_%d' % (j))
+                         prefix + '__', '__t_%d' % (t + 1))
+
+        write_deformations(v, self.deformation_grid.detach().cpu().numpy(), prefix + '__', '__vfield')
 
 
 if __name__ == '__main__':
@@ -1030,7 +1009,7 @@ if __name__ == '__main__':
     # experiment_prefix = '39_bayesian_atlas_fourier__small_latent_space'
     # experiment_prefix = '4_bayesian_atlas_fourier__latent_space_2__lambda_1e-4'
     # experiment_prefix = '1_bayesian_atlas_fourier__latent_space_2__lambda_1e-4'
-    experiment_prefix = '47_bayesian_atlas_fourier__latent_10__current_5__lambda_1e-6__grid_16__dynamic__all_5__new_sobolev'
+    experiment_prefix = '45_bayesian_atlas_fourier__latent_10__current_5__lambda_1e-6__grid_16__static__all_5__kappa_10'
 
     # MODEL
 
@@ -1126,6 +1105,7 @@ if __name__ == '__main__':
 
         alpha = splatting_kernel_width
         lambda_ = 1e-6
+        kappa_ = 10.
         noise_variance = 1.0 ** 2
         number_of_epochs_for_warm_up = 0
         learning_rate = 1e-2
@@ -1347,7 +1327,7 @@ if __name__ == '__main__':
             sobolev_regularity_loss *= lambda_
             train_sobolev_regularity_loss += sobolev_regularity_loss.detach().cpu().numpy()
 
-            kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
+            kullback_regularity_loss = - kappa_ * torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
             train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
             total_loss = attachment_loss + sobolev_regularity_loss + kullback_regularity_loss
@@ -1432,7 +1412,7 @@ if __name__ == '__main__':
         sobolev_regularity_loss *= lambda_
         test_sobolev_regularity_loss += sobolev_regularity_loss.detach().cpu().numpy()
 
-        kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
+        kullback_regularity_loss = - kappa_ * torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
         test_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
         total_loss = attachment_loss + sobolev_regularity_loss + kullback_regularity_loss
