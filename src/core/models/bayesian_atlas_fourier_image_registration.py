@@ -1038,7 +1038,7 @@ if __name__ == '__main__':
     learning_rate_ratio = 0.5
     learning_rate_decay = 0.95
 
-    batch_size = 32
+    batch_size = 16
 
     device = 'cuda:01'
     # device = 'cpu'
@@ -1048,17 +1048,13 @@ if __name__ == '__main__':
     ############################
 
     if dataset == 'brains':
-        experiment_prefix = '34_bayesian_atlas_fourier_image__batch_32'
+        experiment_prefix = '345_bayesian_atlas_fourier_image__batch_32__registration_continued'
 
-        path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/brains/data'))
-
-        initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/brains/data/colin27.nii'))
-        # initialize_encoder = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/brains/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
-        # initialize_decoder = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/brains/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
-
-        initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/brains/output__33_bayesian_atlas_fourier_image/epoch_25000__model.pth'))
-        # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_encoder__epoch_9000__model.pth'))
-        # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
+        path_to_data = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/brains/data'))
+        initial_state = os.path.normpath(
+            os.path.join(os.path.dirname(__file__),
+                         '../../../examples/brains/'
+                         'output__34_bayesian_atlas_fourier_image__batch_32/epoch_25000__model.pth'))
 
         dimension = 3
         latent_dimension = 3
@@ -1070,7 +1066,7 @@ if __name__ == '__main__':
         noise_variance = 1. ** 2
 
         intensities, intensities_test = create_cross_sectional_brains_dataset__final(
-            path_to_meshes,
+            path_to_data,
             number_of_datum_train, number_of_datum_test, random_seed=42)
 
     else:
@@ -1079,7 +1075,7 @@ if __name__ == '__main__':
     assert number_of_time_points > 1
 
     log = ''
-    output_dir = os.path.join(path_to_meshes, '../output__' + experiment_prefix)
+    output_dir = os.path.join(path_to_data, '../output__' + experiment_prefix)
     if not os.path.isdir(output_dir):
         os.mkdir(output_dir)
 
@@ -1101,8 +1097,6 @@ if __name__ == '__main__':
     noise_dimension = 64 ** 3
 
     if initialize_template is None:
-        initial_template__black = torch.zeros(intensities[0].size())
-        initial_template__test = intensities_test[0]
         initial_template__mean = torch.mean(intensities, dim=0)
         initial_template_intensities = initial_template__mean
     else:
@@ -1117,6 +1111,10 @@ if __name__ == '__main__':
     # optimizer = Adam(model.parameters(), lr=learning_rate)
     # scheduler = StepLR(optimizer, step_size=max(10, int(number_of_epochs / 100.)), gamma=learning_rate_decay)
 
+    batch_target_intensities = intensities
+    latent_momenta, _ = model.encode(batch_target_intensities)
+    latent_momenta = nn.Parameter(latent_momenta)
+
     if 'cuda' in device:
         model.cuda()
 
@@ -1124,143 +1122,7 @@ if __name__ == '__main__':
     ###### INITIALIZE ######
     ########################
 
-    if initialize_encoder is not None:
-        print('>> INITIALIZING THE ENCODER from file: %s' % initialize_encoder)
-        latent_momenta__init = torch.from_numpy(np.loadtxt(initialize_encoder)).float()
-        if 'cuda' in device:
-            latent_momenta__init = latent_momenta__init.cuda()
-        optimizer = Adam(model.encoder.parameters(), lr=learning_rate)
-
-        for epoch in range(number_of_epochs_for_init + 1):
-
-            np_attachment_loss = 0.0
-            np_kullback_regularity_loss = 0.0
-            np_total_loss = 0.0
-
-            indexes = np.random.permutation(number_of_datum_train)
-            for k in range(number_of_datum_train // batch_size):  # drops the last batch
-                if 'cuda' in device:
-                    batch_target_intensities = intensities[indexes[k * batch_size:(k + 1) * batch_size]].cuda()
-                else:
-                    batch_target_intensities = intensities[indexes[k * batch_size:(k + 1) * batch_size]]
-                batch_latent_momenta__init = latent_momenta__init[indexes[k * batch_size:(k + 1) * batch_size]]
-
-                # ENCODE AND SAMPLE
-                means, log_variances = model.encode(batch_target_intensities)
-                batch_latent_momenta = means + torch.zeros_like(means).normal_() * torch.exp(0.5 * log_variances)
-
-                # LOSS
-                attachment_loss = torch.sum(
-                    (batch_latent_momenta - batch_latent_momenta__init) ** 2) / 0.01
-                np_attachment_loss += attachment_loss.detach().cpu().numpy()
-
-                kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
-                np_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
-
-                total_loss = attachment_loss + kullback_regularity_loss
-                np_total_loss += total_loss.detach().cpu().numpy()
-
-                # GRADIENT STEP
-                optimizer.zero_grad()
-                total_loss.backward()
-                optimizer.step()
-
-            np_attachment_loss /= float(batch_size * (number_of_datum_train // batch_size))
-            np_kullback_regularity_loss /= float(batch_size * (number_of_datum_train // batch_size))
-            np_total_loss /= float(batch_size * (number_of_datum_train // batch_size))
-
-            if epoch % print_every_n_iters == 0 or epoch == number_of_epochs_for_init:
-                log += cprint(
-                    '\n[Epoch: %d] Learning rate = %.2E'
-                    '\nTrain loss = %.3f (attachment = %.3f ; kullback regularity = %.3f)' %
-                    (epoch, list(optimizer.param_groups)[0]['lr'],
-                     np_total_loss, np_attachment_loss, np_kullback_regularity_loss))
-
-            if epoch % save_every_n_iters == 0 or epoch == number_of_epochs_for_init:
-                with open(os.path.join(output_dir, 'init_encoder__log.txt'), 'w') as f:
-                    f.write(log)
-
-                torch.save(model.encoder.state_dict(),
-                           os.path.join(output_dir, 'init_encoder__epoch_%d__model.pth' % epoch))
-
-        initial_encoder_state = os.path.join(output_dir,
-                                             'init_encoder__epoch_%d__model.pth' % number_of_epochs_for_init)
-
-    if initialize_decoder is not None:
-        print('>> INITIALIZING THE DECODER from file: %s' % initialize_decoder)
-        latent_momenta__init = torch.from_numpy(np.loadtxt(initialize_decoder)).float()
-        if 'cuda' in device:
-            latent_momenta__init = latent_momenta__init.cuda()
-        optimizer = Adam(model.decoder.parameters(), lr=learning_rate)
-
-        for epoch in range(number_of_epochs_for_init + 1):
-
-            np_attachment_loss = 0.0
-            np_sobolev_regularity_loss = 0.0
-            np_total_loss = 0.0
-
-            indexes = np.random.permutation(number_of_datum_train)
-            for k in range(number_of_datum_train // batch_size):  # drops the last batch
-                if 'cuda' in device:
-                    batch_target_intensities = intensities[indexes[k * batch_size:(k + 1) * batch_size]].cuda()
-                else:
-                    batch_target_intensities = intensities[indexes[k * batch_size:(k + 1) * batch_size]]
-                batch_latent_momenta = latent_momenta__init[indexes[k * batch_size:(k + 1) * batch_size]]
-
-                # DECODE
-                deformed_template, sobolev_regularity_loss = model(batch_latent_momenta, with_regularity_loss=True)
-
-                # LOSS
-                attachment_loss = torch.sum((deformed_template - batch_target_intensities) ** 2) / noise_variance
-                np_attachment_loss += attachment_loss.detach().cpu().numpy()
-
-                sobolev_regularity_loss *= lambda_
-                np_sobolev_regularity_loss += sobolev_regularity_loss.detach().cpu().numpy()
-
-                total_loss = attachment_loss + sobolev_regularity_loss
-                np_total_loss += total_loss.detach().cpu().numpy()
-
-                # GRADIENT STEP
-                optimizer.zero_grad()
-                total_loss.backward()
-                optimizer.step()
-
-            np_attachment_loss /= float(batch_size * (number_of_datum_train // batch_size))
-            np_sobolev_regularity_loss /= float(batch_size * (number_of_datum_train // batch_size))
-            np_total_loss /= float(batch_size * (number_of_datum_train // batch_size))
-
-            if epoch % print_every_n_iters == 0 or epoch == number_of_epochs_for_init:
-                log += cprint(
-                    '\n[Epoch: %d] Learning rate = %.2E'
-                    '\nTrain loss = %.3f (attachment = %.3f ; sobolev regularity = %.3f)' %
-                    (epoch, list(optimizer.param_groups)[0]['lr'],
-                     np_total_loss, np_attachment_loss, np_sobolev_regularity_loss))
-
-            if epoch % save_every_n_iters == 0 or epoch == number_of_epochs_for_init:
-                with open(os.path.join(output_dir, 'init_decoder__log.txt'), 'w') as f:
-                    f.write(log)
-
-                torch.save(model.decoder.state_dict(),
-                           os.path.join(output_dir, 'init_decoder__epoch_%d__model.pth' % epoch))
-
-            initial_decoder_state = os.path.join(output_dir,
-                                                 'init_decoder__epoch_%d__model.pth' % number_of_epochs_for_init)
-
     # LOAD INITIALIZATIONS ----------------------------------------
-    if initial_encoder_state is not None:
-        print('>> initial_encoder_state = %s' % os.path.basename(initial_encoder_state))
-        encoder_state_dict = torch.load(initial_encoder_state, map_location=lambda storage, loc: storage)
-        # if 'cuda' in device:
-        #     encoder_state_dict = encoder_state_dict.cuda()
-        model.encoder.load_state_dict(encoder_state_dict)
-
-    if initial_decoder_state is not None:
-        print('>> initial_decoder_state = %s' % os.path.basename(initial_decoder_state))
-        decoder_state_dict = torch.load(initial_decoder_state, map_location=lambda storage, loc: storage)
-        # if 'cuda' in device:
-        #     decoder_state_dict = decoder_state_dict.cuda()
-        model.decoder.load_state_dict(decoder_state_dict)
-
     if initial_state is not None:
         print('>> initial_state = %s' % os.path.basename(initial_state))
         state_dict = torch.load(initial_state, map_location=lambda storage, loc: storage)
@@ -1269,7 +1131,7 @@ if __name__ == '__main__':
         model.load_state_dict(state_dict)
     # -------------------------------------------------------------
 
-    optimizer = Adam(model.parameters(), lr=learning_rate)
+    optimizer = Adam([latent_momenta], lr=learning_rate)
     for epoch in range(number_of_epochs + 1):
         # scheduler.step()
 
@@ -1288,24 +1150,13 @@ if __name__ == '__main__':
         for k in range(number_of_datum_train // batch_size):  # drops the last batch
             if 'cuda' in device:
                 batch_target_intensities = intensities[indexes[k * batch_size:(k + 1) * batch_size]].cuda()
+                batch_latent_momenta = latent_momenta[indexes[k * batch_size:(k + 1) * batch_size]].cuda()
             else:
                 batch_target_intensities = intensities[indexes[k * batch_size:(k + 1) * batch_size]]
+                batch_latent_momenta = latent_momenta[indexes[k * batch_size:(k + 1) * batch_size]]
 
-            # ENCODE, SAMPLE AND DECODE
-            means, log_variances = model.encode(batch_target_intensities)
-
-            if epoch < number_of_epochs_for_warm_up + 1:
-                batch_latent_momenta = means
-                deformed_template = model(batch_latent_momenta, with_regularity_loss=False)
-                sobolev_regularity_loss = torch.from_numpy(np.array(0.0)).float()
-                if 'cuda' in device:
-                    sobolev_regularity_loss = sobolev_regularity_loss.cuda()
-            else:
-                batch_latent_momenta = means + torch.zeros_like(means).normal_() * torch.exp(0.5 * log_variances)
-                deformed_template, sobolev_regularity_loss = model(batch_latent_momenta, with_regularity_loss=True)
-
-            # z_mean += torch.sum(batch_latent_momenta.detach(), dim=0).detach().cpu().numpy()
-            # z_std += torch.sum(batch_latent_momenta.detach() ** 2, dim=0).detach().cpu().numpy()
+            # DECODE
+            deformed_template, sobolev_regularity_loss = model(batch_latent_momenta, with_regularity_loss=True)
 
             # LOSS
             attachment_loss = torch.sum((deformed_template - batch_target_intensities) ** 2) / noise_variance
@@ -1314,69 +1165,23 @@ if __name__ == '__main__':
             sobolev_regularity_loss *= lambda_
             train_sobolev_regularity_loss += sobolev_regularity_loss.detach().cpu().numpy()
 
-            kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
-            kullback_regularity_loss *= kappa_
-            train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
+            # kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
+            # kullback_regularity_loss *= kappa_
+            # train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
-            total_loss = attachment_loss + sobolev_regularity_loss + kullback_regularity_loss
+            total_loss = attachment_loss + sobolev_regularity_loss
             train_total_loss += total_loss.detach().cpu().numpy()
 
             # GRADIENT STEP
             optimizer.zero_grad()
             total_loss.backward()
-            model.tamper_template_gradient(learning_rate_ratio, epoch < 100)
             optimizer.step()
-            model.clamp_template_intensities()
-            # model.update_template(learning_rate_ratio * list(optimizer.param_groups)[0]['lr'])
-
-            # noise_variance *= float(attachment_loss.detach().cpu().numpy() / float(noise_dimension * batch_size))
 
         train_attachment_loss /= float(batch_size * (number_of_datum_train // batch_size))
         train_sobolev_regularity_loss /= float(batch_size * (number_of_datum_train // batch_size))
         train_kullback_regularity_loss /= float(batch_size * (number_of_datum_train // batch_size))
         train_total_loss /= float(batch_size * (number_of_datum_train // batch_size))
 
-        ############
-        ### TEST ###
-        ############
-
-        test_attachment_loss = 0.
-        test_sobolev_regularity_loss = 0.
-        test_kullback_regularity_loss = 0.
-        test_total_loss = 0.
-
-        # batch_target_intensities = intensities_test.cuda()
-        #
-        # # ENCODE, SAMPLE AND DECODE
-        # means, log_variances = model.encode(batch_target_intensities)
-        # batch_latent_momenta = means
-        # deformed_template, sobolev_regularity_loss = model(batch_latent_momenta, with_regularity_loss=True)
-        #
-        # # LOSS
-        # attachment_loss = torch.sum((deformed_template - batch_target_intensities) ** 2) / noise_variance
-        # test_attachment_loss += attachment_loss.detach().cpu().numpy()
-        #
-        # sobolev_regularity_loss *= lambda_
-        # test_sobolev_regularity_loss += sobolev_regularity_loss.detach().cpu().numpy()
-        #
-        # kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
-        # test_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
-        #
-        # total_loss = attachment_loss + sobolev_regularity_loss + kullback_regularity_loss
-        # test_total_loss += total_loss.detach().cpu().numpy()
-        #
-        # test_attachment_loss /= float(number_of_datum_test)
-        # test_sobolev_regularity_loss /= float(number_of_datum_test)
-        # test_kullback_regularity_loss /= float(number_of_datum_test)
-        # test_total_loss /= float(number_of_datum_test)
-
-        ################
-        ### TEMPLATE ###
-        ################
-
-        template_intensities = model.template_intensities.view((1,) + model.template_intensities.size())
-        template_latent_momenta, _ = model.encode(template_intensities)
-        template_latent_momenta_norm = float(torch.norm(template_latent_momenta[0], p=2).detach().cpu().numpy())
 
         #############
         ### WRITE ###
@@ -1384,25 +1189,22 @@ if __name__ == '__main__':
 
         if epoch % print_every_n_iters == 0 or epoch == number_of_epochs:
             log += cprint(
-                '\n[Epoch: %d] Learning rate = %.2E ; Noise std = %.2E ; Template latent q norm = %.3f'
-                '\nTrain loss = %.3E (attachment = %.3E ; sobolev regularity = %.3E ; kullback regularity = %.3E)'
-                '\nTest  loss = %.3E (attachment = %.3E ; sobolev regularity = %.3E ; kullback regularity = %.3E)' %
-                (epoch, list(optimizer.param_groups)[0]['lr'], math.sqrt(noise_variance), template_latent_momenta_norm,
-                 train_total_loss, train_attachment_loss, train_sobolev_regularity_loss, train_kullback_regularity_loss,
-                 test_total_loss, test_attachment_loss, test_sobolev_regularity_loss, test_kullback_regularity_loss))
+                '\n[Epoch: %d] Learning rate = %.2E ; Noise std = %.2E'
+                '\nTrain loss = %.3E (attachment = %.3E ; sobolev regularity = %.3E ; kullback regularity = %.3E)' %
+                (epoch, list(optimizer.param_groups)[0]['lr'], math.sqrt(noise_variance),
+                 train_total_loss, train_attachment_loss, train_sobolev_regularity_loss, train_kullback_regularity_loss))
 
         if epoch % save_every_n_iters == 0 or epoch == number_of_epochs:
             with open(os.path.join(output_dir, 'log.txt'), 'w') as f:
                 f.write(log)
 
             torch.save(model.state_dict(), os.path.join(output_dir, 'epoch_%d__model.pth' % epoch))
+            np.savetxt(os.path.join(output_dir, 'epoch_%d__latent_momenta.txt' % epoch),
+                       latent_momenta.detach().cpu().numpy())
 
             n = 3
             if 'cuda' in device:
                 model.write_trajectories(intensities[:n].cuda(), os.path.join(output_dir, 'epoch_%d__train' % epoch))
-                # model.write_trajectories(intensities_test[:n].cuda(), os.path.join(output_dir, 'epoch_%d__test' % epoch))
-                # model.write_trajectories(template_intensities, os.path.join(output_dir, 'epoch_%d__template' % epoch))
+
             else:
                 model.write_trajectories(intensities[:n], os.path.join(output_dir, 'epoch_%d__train' % epoch))
-                # model.write_trajectories(intensities_test[:n], os.path.join(output_dir, 'epoch_%d__test' % epoch))
-                # model.write_trajectories(template_intensities, os.path.join(output_dir, 'epoch_%d__template' % epoch))
