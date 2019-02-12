@@ -335,6 +335,22 @@ def smooth_intensities(intensities, sigma):
     return filter(intensities.unsqueeze(0))[0]
 
 
+def batched_vector_smoothing(vector, sigma):
+    kernel_size = int(5. * sigma + .5)
+    grid = torch.stack(torch.meshgrid([torch.arange(kernel_size),
+                                       torch.arange(kernel_size),
+                                       torch.arange(kernel_size)]), dim=-1).float().type(str(intensities.type()))
+    mean = (kernel_size - 1) / 2.
+    variance = sigma ** 2.
+    weights = torch.exp(- torch.sum((grid - mean) ** 2., dim=-1) / (2 * variance))
+    weights /= torch.sum(weights)
+    filter = nn.Conv3d(3, 3, kernel_size, groups=1, bias=False, padding=int(mean))
+    filter.weight.data = \
+        weights.view(1, 1, kernel_size, kernel_size, kernel_size).expand(3, 3, kernel_size, kernel_size, kernel_size)
+    filter.weight.data.requires_grad_(False)
+    return filter(vector)
+
+
 def compute_bounding_box(points):
     dimension = points.size(1)
     bounding_box = torch.zeros((dimension, 2))
@@ -932,8 +948,8 @@ class BayesianAtlas(nn.Module):
         # DECODE
         v = self.decoder(z)
 
-        # # GAUSSIAN SMOOTHING
-        # v = blabla
+        # GAUSSIAN SMOOTHING
+        v = batched_vector_smoothing(v, 0.5)
 
         # FLOW: SCALING AND SQUARING
         assert self.dimension == 3
@@ -978,6 +994,9 @@ class BayesianAtlas(nn.Module):
 
         # DECODE
         v = self.decoder(z)
+
+        # GAUSSIAN SMOOTHING
+        v = batched_vector_smoothing(v, 0.5)
 
         # FLOW: SCALING AND SQUARING
         assert self.dimension == 3
