@@ -202,3 +202,41 @@ def splat_current_on_grid(points, connectivity, grid, kernel_width):
     dimension = points.shape[1]
     centers, normals = compute_centers_and_normals(points, connectivity)
     return convolve(grid.view(-1, dimension), centers, normals, kernel_width).view(grid.size())
+
+
+def compute_noise_dimension(template, multi_object_attachment, dimension, objects_name=None):
+    """
+    Compute the dimension of the spaces where the norm are computed, for each object.
+    """
+    assert len(template.object_list) == len(multi_object_attachment.attachment_types)
+    assert len(template.object_list) == len(multi_object_attachment.kernels)
+
+    objects_noise_dimension = []
+    for k in range(len(template.object_list)):
+
+        if multi_object_attachment.attachment_types[k] in ['current', 'varifold', 'pointcloud']:
+            noise_dimension = 1
+            for d in range(dimension):
+                length = template.bounding_box[d, 1] - template.bounding_box[d, 0]
+                assert length >= 0
+                noise_dimension *= math.floor(length / multi_object_attachment.kernels[k].kernel_width + 1.0)
+            noise_dimension *= dimension
+
+        elif multi_object_attachment.attachment_types[k] in ['landmark']:
+            noise_dimension = dimension * template.object_list[k].points.shape[0]
+
+        elif multi_object_attachment.attachment_types[k] in ['L2']:
+            noise_dimension = template.object_list[k].intensities.size
+
+        else:
+            raise RuntimeError('Unknown noise dimension for the attachment type: '
+                               + multi_object_attachment.attachment_types[k])
+
+        objects_noise_dimension.append(noise_dimension)
+
+    if objects_name is not None:
+        print('>> Objects noise dimension:')
+        for (object_name, object_noise_dimension) in zip(objects_name, objects_noise_dimension):
+            print('\t\t[ %s ]\t%d' % (object_name, int(object_noise_dimension)))
+
+    return objects_noise_dimension

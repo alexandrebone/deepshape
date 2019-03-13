@@ -79,7 +79,7 @@ if __name__ == '__main__':
     ############################
 
     if dataset == 'starmen':
-        experiment_prefix = '3_lbfgs'
+        experiment_prefix = '3_update_variance'
         path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data'))
 
         initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data/SimulatedData__EstimatedParameters__Template_starman__tp_22__age_70.00.vtk'))
@@ -90,8 +90,8 @@ if __name__ == '__main__':
         # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_encoder__epoch_9000__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
-        number_of_meshes_train = 96
-        number_of_meshes_test = 96
+        number_of_meshes_train = 32
+        number_of_meshes_test = 32
 
         splatting_grid_size = 16
         deformation_grid_size = 16
@@ -105,6 +105,7 @@ if __name__ == '__main__':
         splatting_kernel_width = 1.0
 
         noise_variance = 0.01 ** 2
+        # noise_variance = 0.1 ** 2
 
         gamma_splatting = torch.from_numpy(np.array([1. / splatting_kernel_width ** 2.])).float()
         gkernel = Genred("Exp( - G * SqDist(X, Y) ) * P",
@@ -125,20 +126,20 @@ if __name__ == '__main__':
             splatting_grid, splatting_kernel_width, dimension, random_seed=42)
 
         # OPTIMIZATION ------------------------------
-        number_of_epochs = 1000
+        number_of_epochs = 2000
         number_of_epochs_for_init = 100
         number_of_epochs_for_warm_up = 0
-        print_every_n_iters = 50
-        save_every_n_iters = 250
+        print_every_n_iters = 100
+        save_every_n_iters = 500
 
-        learning_rate = 5e-3
+        learning_rate = 1e-3
         learning_rate_decay = 0.95
-        learning_rate_ratio = 1e-4
+        learning_rate_ratio = 1.
 
-        batch_size = 96
+        batch_size = 32
 
-        # device = 'cuda:01'
-        device = 'cpu'
+        device = 'cuda:01'
+        # device = 'cpu'
         # -------------------------------------------
 
     elif dataset == 'ellipsoids':
@@ -696,147 +697,85 @@ if __name__ == '__main__':
         train_kullback_regularity_loss = 0.
         train_total_loss = 0.
 
-        if isinstance(optimizer, LBFGS):
+        indexes = np.random.permutation(number_of_meshes_train)
+        for k in range(number_of_meshes_train // batch_size):  # drops the last batch
+            batch_target_splats = splats[indexes[k * batch_size:(k + 1) * batch_size]]
 
-            def compute_losses(indxs):
+            if dimension == 2:
+                batch_target_splats = batch_target_splats.permute(0, 3, 1, 2)
+            elif dimension == 3:
+                batch_target_splats = batch_target_splats.permute(0, 4, 1, 2, 3)
+            else:
+                raise RuntimeError
 
-                batch_target_splats = splats[indxs]
-                if dimension == 2:
-                    batch_target_splats = batch_target_splats.permute(0, 3, 1, 2)
-                elif dimension == 3:
-                    batch_target_splats = batch_target_splats.permute(0, 4, 1, 2, 3)
-                else:
-                    raise RuntimeError
+            # ENCODE, SAMPLE AND DECODE
+            means, log_variances = model.encode(batch_target_splats)
 
-                means, log_variances = model.encode(batch_target_splats)
+            if epoch < number_of_epochs_for_warm_up + 1:
+                batch_latent_momenta = means
+                deformed_template_points = model(batch_latent_momenta)
+            else:
                 batch_latent_momenta = means + torch.zeros_like(means).normal_() * torch.exp(0.5 * log_variances)
                 deformed_template_points = model(batch_latent_momenta)
 
-                if dataset in ['circles', 'ellipsoids', 'starmen', 'leaves', 'squares']:
-                    batch_target_points = points[indxs]
-                    attachment_loss = torch.sum((deformed_template_points - batch_target_points) ** 2) / noise_variance
+            # LOSS
+            if dataset in ['circles', 'ellipsoids', 'starmen', 'leaves', 'squares']:
+                batch_target_points = points[indexes[k * batch_size:(k + 1) * batch_size]]
+                attachment_loss = torch.sum((deformed_template_points - batch_target_points) ** 2) / noise_variance
 
-                elif dataset == 'hippocampi':
-                    batch_target_centers = centers[indxs]
-                    batch_target_normals = normals[indxs]
-                    batch_target_norms = norms[indxs]
+            elif dataset == 'hippocampi':
+                batch_target_centers = [centers[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
+                batch_target_normals = [normals[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
+                batch_target_norms = [norms[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
 
-                    attachment_loss = 0.0
-                    for p1, c2, n2, norm2 in zip(
-                            deformed_template_points, batch_target_centers, batch_target_normals, batch_target_norms):
-                        c1, n1 = compute_centers_and_normals(p1, model.template_connectivity)
-                        attachment_loss += (
-                                norm2 +
-                                torch.sum(n1 * gkernel(gamma_splatting, c1, c1, n1)) - 2 *
-                                torch.sum(n1 * gkernel(gamma_splatting, c1, c2, n2)))
-                    attachment_loss /= noise_variance
-                else:
-                    raise RuntimeError
+                # Current
+                attachment_loss = 0.0
+                for p1, c2, n2, norm2 in zip(
+                        deformed_template_points, batch_target_centers, batch_target_normals, batch_target_norms):
+                    c1, n1 = compute_centers_and_normals(p1, model.template_connectivity)
+                    attachment_loss += (
+                            norm2 +
+                            torch.sum(n1 * gkernel(gamma_splatting, c1, c1, n1)) - 2 *
+                            torch.sum(n1 * gkernel(gamma_splatting, c1, c2, n2)))
+                attachment_loss /= noise_variance
 
-                kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
+                # # Varifold
+                # attachment_loss = 0.0
+                # for p1, c2, n2, norm2 in zip(
+                #         deformed_template_points, batch_target_centers, batch_target_normals, batch_target_norms):
+                #     c1, n1 = compute_centers_and_normals(p1, model.template_connectivity)
+                #     a1 = torch.norm(n1, 2, 1).view(-1, 1)
+                #     a2 = torch.norm(n2, 2, 1).view(-1, 1)
+                #     u1 = n1 / a1
+                #     u2 = n2 / a2
+                #     attachment_loss += (
+                #             torch.sum(a1 * vkernel(gamma_varifold, c1, c1, u1, u1, a1)) +
+                #             torch.sum(a2 * vkernel(gamma_varifold, c2, c2, u2, u2, a2)) - 2 *
+                #             torch.sum(a1 * vkernel(gamma_varifold, c1, c2, u1, u2, a2)))
+                # attachment_loss /= noise_variance
 
-                return attachment_loss, kullback_regularity_loss
+            else:
+                raise RuntimeError
 
-            def closure():
-                optimizer.zero_grad()
-                attachment_loss, kullback_regularity_loss = compute_losses(range(number_of_meshes_train))
-                total_loss = attachment_loss + kullback_regularity_loss
-                total_loss.backward()
-                model.tamper_template_gradient(gkernel, gamma_splatting, learning_rate_ratio, epoch < 100)
-                return total_loss
+            train_attachment_loss += attachment_loss.detach().cpu().numpy()
 
-            optimizer.step(closure)
-            # print(torch.sum(model.template_points ** 2).cpu().detach().numpy())
+            kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
+            train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
-            # For printing
-            attachment_loss, kullback_regularity_loss = compute_losses(range(number_of_meshes_train))
+            total_loss = attachment_loss + kullback_regularity_loss
+            # total_loss = attachment_loss
+            train_total_loss += total_loss.detach().cpu().numpy()
 
-            train_attachment_loss = attachment_loss.cpu().detach().numpy() / float(number_of_meshes_train)
-            train_kullback_regularity_loss = kullback_regularity_loss.cpu().detach().numpy() / float(number_of_meshes_train)
-            train_total_loss = (train_attachment_loss + train_kullback_regularity_loss)
+            # GRADIENT STEP
+            optimizer.zero_grad()
+            total_loss.backward()
+            model.tamper_template_gradient(gkernel, gamma_splatting, learning_rate_ratio, epoch < 20)
+            optimizer.step()
+            # model.update_template(gkernel, gamma_splatting, learning_rate_ratio * list(optimizer.param_groups)[0]['lr'])
 
-        elif isinstance(optimizer, Adam):
-            indexes = np.random.permutation(number_of_meshes_train)
-            for k in range(number_of_meshes_train // batch_size):  # drops the last batch
-                batch_target_splats = splats[indexes[k * batch_size:(k + 1) * batch_size]]
-
-                if dimension == 2:
-                    batch_target_splats = batch_target_splats.permute(0, 3, 1, 2)
-                elif dimension == 3:
-                    batch_target_splats = batch_target_splats.permute(0, 4, 1, 2, 3)
-                else:
-                    raise RuntimeError
-
-                # ENCODE, SAMPLE AND DECODE
-                means, log_variances = model.encode(batch_target_splats)
-
-                if epoch < number_of_epochs_for_warm_up + 1:
-                    batch_latent_momenta = means
-                    deformed_template_points = model(batch_latent_momenta)
-                else:
-                    batch_latent_momenta = means + torch.zeros_like(means).normal_() * torch.exp(0.5 * log_variances)
-                    deformed_template_points = model(batch_latent_momenta)
-
-                # LOSS
-                if dataset in ['circles', 'ellipsoids', 'starmen', 'leaves', 'squares']:
-                    batch_target_points = points[indexes[k * batch_size:(k + 1) * batch_size]]
-                    attachment_loss = torch.sum((deformed_template_points - batch_target_points) ** 2) / noise_variance
-
-                elif dataset == 'hippocampi':
-                    batch_target_centers = [centers[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
-                    batch_target_normals = [normals[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
-                    batch_target_norms = [norms[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
-
-                    # Current
-                    attachment_loss = 0.0
-                    for p1, c2, n2, norm2 in zip(
-                            deformed_template_points, batch_target_centers, batch_target_normals, batch_target_norms):
-                        c1, n1 = compute_centers_and_normals(p1, model.template_connectivity)
-                        attachment_loss += (
-                                norm2 +
-                                torch.sum(n1 * gkernel(gamma_splatting, c1, c1, n1)) - 2 *
-                                torch.sum(n1 * gkernel(gamma_splatting, c1, c2, n2)))
-                    attachment_loss /= noise_variance
-
-                    # # Varifold
-                    # attachment_loss = 0.0
-                    # for p1, c2, n2, norm2 in zip(
-                    #         deformed_template_points, batch_target_centers, batch_target_normals, batch_target_norms):
-                    #     c1, n1 = compute_centers_and_normals(p1, model.template_connectivity)
-                    #     a1 = torch.norm(n1, 2, 1).view(-1, 1)
-                    #     a2 = torch.norm(n2, 2, 1).view(-1, 1)
-                    #     u1 = n1 / a1
-                    #     u2 = n2 / a2
-                    #     attachment_loss += (
-                    #             torch.sum(a1 * vkernel(gamma_varifold, c1, c1, u1, u1, a1)) +
-                    #             torch.sum(a2 * vkernel(gamma_varifold, c2, c2, u2, u2, a2)) - 2 *
-                    #             torch.sum(a1 * vkernel(gamma_varifold, c1, c2, u1, u2, a2)))
-                    # attachment_loss /= noise_variance
-
-                else:
-                    raise RuntimeError
-
-                train_attachment_loss += attachment_loss.detach().cpu().numpy()
-
-                kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
-                train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
-
-                total_loss = attachment_loss + kullback_regularity_loss
-                # total_loss = attachment_loss
-                train_total_loss += total_loss.detach().cpu().numpy()
-
-                # GRADIENT STEP
-                optimizer.zero_grad()
-                total_loss.backward()
-                model.tamper_template_gradient(gkernel, gamma_splatting, learning_rate_ratio, epoch < 100)
-                optimizer.step()
-                # model.update_template(gkernel, gamma_splatting, learning_rate_ratio * list(optimizer.param_groups)[0]['lr'])
-
-                # noise_variance *= float(attachment_loss.detach().cpu().numpy() / float(noise_dimension * batch_size))
-
-            train_attachment_loss /= float(batch_size * (number_of_meshes_train // batch_size))
-            train_kullback_regularity_loss /= float(batch_size * (number_of_meshes_train // batch_size))
-            train_total_loss /= float(batch_size * (number_of_meshes_train // batch_size))
+        train_attachment_loss /= float(batch_size * (number_of_meshes_train // batch_size))
+        train_kullback_regularity_loss /= float(batch_size * (number_of_meshes_train // batch_size))
+        train_total_loss /= float(batch_size * (number_of_meshes_train // batch_size))
 
         ############
         ### TEST ###
@@ -923,6 +862,13 @@ if __name__ == '__main__':
             template_splat = template_splat.permute(3, 0, 1, 2)
         template_latent_momenta, _ = model.encode(template_splat.view((1,) + template_splat.size()))
         template_latent_momenta_norm = float(torch.norm(template_latent_momenta[0], p=2).detach().cpu().numpy())
+
+        ##############
+        ### UPDATE ###
+        ##############
+
+        # if epoch > 0 and epoch % 500 == 0:
+        noise_variance *= train_attachment_loss / (model.template_points.size(0) * dimension)
 
         #############
         ### WRITE ###
