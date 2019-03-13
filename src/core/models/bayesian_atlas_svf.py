@@ -24,115 +24,6 @@ def cprint(str):
     return str + '\n'
 
 
-def read_vtk_file(filename, dimension=None, extract_connectivity=False):
-    """
-    Routine to read  vtk files
-    Probably needs new case management
-    """
-
-    with open(filename, 'r') as f:
-        content = f.readlines()
-    fifth_line = content[4].strip().split(' ')
-
-    assert fifth_line[0] == 'POINTS'
-    assert fifth_line[2] == 'float'
-
-    nb_points = int(fifth_line[1])
-    points = []
-    line_start_connectivity = None
-    connectivity_type = nb_faces = nb_vertices_in_faces = None
-
-    if dimension is None:
-        dimension = DeformableObjectReader.__detect_dimension(content)
-
-    assert isinstance(dimension, int)
-    # logger.debug('Using dimension ' + str(dimension) + ' for file ' + filename)
-
-    # Reading the points:
-    for i in range(5, len(content)):
-        line = content[i].strip().split(' ')
-        # Saving the position of the start for the connectivity
-        if line == ['']:
-            continue
-        elif line[0] in ['LINES', 'POLYGONS']:
-            line_start_connectivity = i
-            connectivity_type, nb_faces, nb_vertices_in_faces = line[0], int(line[1]), int(line[2])
-            break
-        else:
-            points_for_line = np.array(line, dtype=float).reshape(int(len(line) / 3), 3)[:, :dimension]
-            for p in points_for_line:
-                points.append(p)
-    points = np.array(points)
-    assert len(points) == nb_points, 'Something went wrong during the vtk reading'
-
-    # Reading the connectivity, if needed.
-    if extract_connectivity:
-        # Error checking
-        if connectivity_type is None:
-            RuntimeError('Could not determine connectivity type.')
-        if nb_faces is None:
-            RuntimeError('Could not determine number of faces type.')
-        if nb_vertices_in_faces is None:
-            RuntimeError('Could not determine number of vertices type.')
-
-        if line_start_connectivity is None:
-            raise KeyError('Could not read the connectivity for the given vtk file')
-
-        connectivity = []
-
-        for i in range(line_start_connectivity + 1, line_start_connectivity + 1 + nb_faces):
-            line = content[i].strip().split(' ')
-            number_vertices_in_line = int(line[0])
-
-            if connectivity_type == 'POLYGONS':
-                assert number_vertices_in_line == 3, 'Invalid connectivity: deformetrica only handles triangles for now.'
-                connectivity.append([int(elt) for elt in line[1:]])
-            elif connectivity_type == 'LINES':
-                assert number_vertices_in_line >= 2, 'Should not happen.'
-                for j in range(1, number_vertices_in_line):
-                    connectivity.append([int(line[j]), int(line[j + 1])])
-
-        connectivity = np.array(connectivity, dtype=int)
-
-        # Some sanity checks:
-        if connectivity_type == 'POLYGONS':
-            assert len(connectivity) == nb_faces, 'Found an unexpected number of faces.'
-            assert len(connectivity) * 4 == nb_vertices_in_faces
-
-        return torch.from_numpy(points).float(), torch.from_numpy(connectivity)
-
-    return torch.from_numpy(points).float()
-
-
-def write_mesh(filename, points, connectivity=None):
-    connec_names = {2: 'LINES', 3: 'POLYGONS'}
-
-    with open(filename + '.vtk', 'w', encoding='utf-8') as f:
-        s = '# vtk DataFile Version 3.0\nvtk output\nASCII\nDATASET POLYDATA\nPOINTS {} float\n'.format(len(points))
-        f.write(s)
-        for p in points:
-            str_p = [str(elt) for elt in p]
-            if len(p) == 2:
-                str_p.append(str(0.))
-            s = ' '.join(str_p) + '\n'
-            f.write(s)
-
-        if connectivity is not None:
-            a, connec_degree = connectivity.shape
-            s = connec_names[connec_degree] + ' {} {}\n'.format(a, a * (connec_degree + 1))
-            f.write(s)
-            for face in connectivity:
-                s = str(connec_degree) + ' ' + ' '.join([str(elt) for elt in face]) + '\n'
-                f.write(s)
-
-
-def write_meshes(points, connectivity, prefix, suffix, targets=None):
-    for i, p in enumerate(points):
-        write_mesh('%ssubject_%d%s' % (prefix, i, suffix), p, connectivity)
-        if targets is not None:
-            write_mesh('%ssubject_%d%s' % (prefix, i, '__target'), targets[i][0], targets[i][1])
-
-
 def write_image(fn, intensities):
     tol = 1e-10
     nib.save(nib.Nifti1Image(np.clip(intensities[0], tol, 255.0 - tol).astype('uint8'), np.eye(4)), fn)
@@ -560,11 +451,6 @@ def compute_loss(deformed_sources, targets):
     return loss
 
 
-# class Tanh_(Module):
-#     def forward(self, input):
-#         return torch.log(torch.abs(input)) * torch.tanh(input)
-
-
 class Conv2d_Tanh(nn.Module):
     def __init__(self, in_ch, out_ch, bias=True):
         nn.Module.__init__(self)
@@ -631,20 +517,6 @@ class Linear_Tanh(nn.Module):
     def forward(self, x):
         return self.net(x.view(-1, self.in_ch)).view(-1, self.out_ch)
 
-
-# class Linear_Tanh_(nn.Module):
-#     def __init__(self, in_ch, out_ch, bias=True):
-#         nn.Module.__init__(self)
-#         self.in_ch = in_ch
-#         self.out_ch = out_ch
-#         self.net = nn.Sequential(
-#             nn.Linear(in_ch, out_ch, bias=bias),
-#             # nn.Tanh()
-#             Tanh_()
-#         )
-#
-#     def forward(self, x):
-#         return self.net(x.view(-1, self.in_ch)).view(-1, self.out_ch)
 
 
 def plot_registrations(sources, targets,
@@ -784,34 +656,6 @@ class Decoder2d(nn.Module):
         return x
 
 
-class Decoder3d(nn.Module):
-    """
-    in: latent_dimension
-    out: out_grid_size * out_grid_size * out_grid_size * 3
-    """
-
-    def __init__(self, latent_dimension, out_grid_size):
-        nn.Module.__init__(self)
-        self.inner_grid_size = int(out_grid_size * 2 ** -4)
-        self.latent_dimension = latent_dimension
-        self.linear = Linear_Tanh(latent_dimension, 32 * self.inner_grid_size ** 3, bias=False)
-        # self.up1 = ConvTranspose3d_Tanh(32, 32, bias=False)
-        self.up1 = ConvTranspose3d_Tanh(32, 16, bias=False)
-        self.up2 = ConvTranspose3d_Tanh(16, 8, bias=False)
-        self.up3 = ConvTranspose3d_Tanh(8, 4, bias=False)
-        self.up4 = nn.ConvTranspose3d(4, 3, kernel_size=2, stride=2, padding=0, bias=False)
-        print('>> Decoder3d has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
-
-    def forward(self, x):
-        batch_size = x.size(0)
-        x = self.linear(x).view(batch_size, 32, self.inner_grid_size, self.inner_grid_size, self.inner_grid_size)
-        x = self.up1(x)
-        x = self.up2(x)
-        x = self.up3(x)
-        x = self.up4(x)
-        # x = self.up5(x)
-        return x
-
 
 class DeepDecoder3d(nn.Module):
     """
@@ -846,42 +690,6 @@ class DeepDecoder3d(nn.Module):
         return x
 
 
-class DeepDeepDecoder3d(nn.Module):
-    """
-    in: latent_dimension
-    out: out_grid_size * out_grid_size * out_grid_size * 3
-    """
-
-    def __init__(self, latent_dimension, out_grid_size):
-        nn.Module.__init__(self)
-        self.inner_grid_size = int(out_grid_size * 2 ** -4)
-        self.latent_dimension = latent_dimension
-        self.linear1 = Linear_Tanh(latent_dimension, 32 * self.inner_grid_size ** 3, bias=False)
-        self.linear2 = Linear_Tanh(32 * self.inner_grid_size ** 3, 32 * self.inner_grid_size ** 3, bias=False)
-        self.linear3 = Linear_Tanh(32 * self.inner_grid_size ** 3, 32 * self.inner_grid_size ** 3, bias=False)
-        self.linear4 = Linear_Tanh(32 * self.inner_grid_size ** 3, 32 * self.inner_grid_size ** 3, bias=False)
-        self.linear5 = Linear_Tanh(32 * self.inner_grid_size ** 3, 32 * self.inner_grid_size ** 3, bias=False)
-        # self.up1 = ConvTranspose3d_Tanh(32, 32, bias=False)
-        self.up1 = ConvTranspose3d_Tanh(32, 16, bias=False)
-        self.up2 = ConvTranspose3d_Tanh(16, 8, bias=False)
-        self.up3 = ConvTranspose3d_Tanh(8, 4, bias=False)
-        self.up4 = nn.ConvTranspose3d(4, 3, kernel_size=2, stride=2, padding=0, bias=False)
-        print('>> DeepDeepDecoder3d has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
-
-    def forward(self, x):
-        batch_size = x.size(0)
-        x = self.linear1(x)
-        x = self.linear2(x)
-        x = self.linear3(x)
-        x = self.linear4(x)
-        x = self.linear5(x).view(batch_size, 32, self.inner_grid_size, self.inner_grid_size, self.inner_grid_size)
-        x = self.up1(x)
-        x = self.up2(x)
-        x = self.up3(x)
-        x = self.up4(x)
-        # x = self.up5(x)
-        return x
-
 
 class BayesianAtlas(nn.Module):
 
@@ -900,21 +708,6 @@ class BayesianAtlas(nn.Module):
         self.number_of_time_points = number_of_time_points
         self.dt = 1. / float(number_of_time_points - 1)
 
-        s = 3.
-        dgs = self.downsampled_grid_size
-        typ = str(template_intensities.type())
-        if self.dimension == 2:
-            self.L = torch.stack(torch.meshgrid([torch.arange(dgs), torch.arange(dgs)])).type(typ)
-            self.L = (- 2 * alpha * (torch.sum(torch.cos(
-                (2.0 * math.pi / float(dgs)) * self.L), dim=0) - self.dimension) + 1) ** s
-            self.L = self.L.view(1, 1, 1, dgs, dgs, 1)
-        else:
-            self.L = torch.stack(torch.meshgrid([torch.arange(dgs), torch.arange(dgs),
-                                            torch.arange(dgs)])).type(typ)
-            self.L = (- 2 * alpha * (torch.sum(torch.cos(
-                (2.0 * math.pi / float(dgs)) * self.L), dim=0) - self.dimension) + 1) ** s
-            self.L = self.L.view(1, 1, 1, dgs, dgs, dgs, 1)
-
         self.template_intensities = template_intensities
         # self.template_intensities = nn.Parameter(template_intensities)
         print('>> Template intensities are %d^%d = %d parameters' %
@@ -926,8 +719,6 @@ class BayesianAtlas(nn.Module):
         elif self.dimension == 3:
             self.encoder = Encoder3d(self.grid_size, latent_dimension)
             self.decoder = DeepDecoder3d(latent_dimension, self.downsampled_grid_size)
-            # self.encoder = LargeEncoder3d(self.grid_size, latent_dimension)
-            # self.decoder = LargeDecoder3d(latent_dimension, self.downsampled_grid_size)
         else:
             raise RuntimeError
         print('>> BayesianAtlas has %d parameters' % (sum([len(elt.view(-1)) for elt in self.parameters()]) +
@@ -1079,7 +870,7 @@ if __name__ == '__main__':
         # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_encoder__epoch_9000__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
-        dimension = 3
+        dimension = 2
         latent_dimension = 3
 
         alpha = 0.5
@@ -1091,6 +882,11 @@ if __name__ == '__main__':
         intensities, intensities_test = create_cross_sectional_brains_dataset__final(
             path_to_meshes,
             number_of_datum_train, number_of_datum_test, random_seed=42)
+
+        if dimension == 2:
+            intensities = intensities[:, :, :, :, data_size // 2]
+            if number_of_datum_test > 0:
+                intensities_test = intensities_test[:, :, :, :, data_size // 2]
 
     else:
         raise RuntimeError
@@ -1129,6 +925,8 @@ if __name__ == '__main__':
 
     if 'cuda' in device:
         initial_template_intensities = initial_template_intensities.cuda()
+    if dimension == 2:
+        initial_template_intensities = initial_template_intensities[:, :, :, data_size // 2]
 
     model = BayesianAtlas(initial_template_intensities, latent_dimension,
                           alpha, number_of_time_points, downsampling_factor)
