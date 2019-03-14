@@ -36,9 +36,9 @@ if __name__ == '__main__':
     # dataset = 'hippocampi'
     # dataset = 'circles'
     # dataset = 'ellipsoids'
-    dataset = 'starmen'
+    # dataset = 'starmen'
     # dataset = 'leaves'
-    # dataset = 'squares'
+    dataset = 'squares'
 
     number_of_meshes_train = 16
     number_of_meshes_test = 0
@@ -329,34 +329,37 @@ if __name__ == '__main__':
         # ----------------------------
 
     elif dataset == 'squares':
-        experiment_prefix = '6_bayesian_atlas_fourier__latent_space_2__all_subjects'
+        experiment_prefix = '1_first_attempt'
 
         path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/data'))
 
         initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__),
                                                             '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__Template_square.vtk'))
-        initialize_encoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
-                                                           '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
-        initialize_decoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
-                                                           '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
+        # initialize_encoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
+        #                                                    '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
+        # initialize_decoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
+        #                                                    '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
 
         # initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__3_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init__except_template/epoch_11000__model.pth'))
-        # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__33_bayesian_atlas_fourier_image/init_encoder__epoch_25000__model.pth'))
+        # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__1_first_attempt/init_encoder__epoch_500__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
-        number_of_meshes_train = 441
-        number_of_meshes_test = 0
+        number_of_meshes_train = 64
+        # number_of_meshes_train = 441
+        number_of_meshes_test = 32
 
-        splatting_grid_size = 32
-        deformation_grid_size = 32
+        splatting_grid_size = 16
+        deformation_grid_size = 16
         visualization_grid_size = 16
 
-        number_of_time_points = 11
+        number_of_time_points = 5
 
         dimension = 2
+        deformation_kernel_width = 0.5
         splatting_kernel_width = 0.2
 
         noise_variance = 0.01 ** 2
+        lambda_ = .01
 
         latent_dimension = 2
 
@@ -381,15 +384,15 @@ if __name__ == '__main__':
             splatting_grid, splatting_kernel_width, dimension, random_seed=42)
 
         # OPTIMIZATION --------------
-        number_of_epochs = 25000
-        number_of_epochs_for_init = 25000
+        number_of_epochs = 2500
+        number_of_epochs_for_init = 500
         number_of_epochs_for_warm_up = 0
         print_every_n_iters = 100
-        save_every_n_iters = 1000
+        save_every_n_iters = 500
 
-        learning_rate = 5e-4
+        learning_rate = 1e-3
         learning_rate_decay = 1.
-        learning_rate_ratio = 5e-5
+        learning_rate_ratio = 1e-2
 
         batch_size = 32
 
@@ -878,7 +881,7 @@ if __name__ == '__main__':
 
         # if epoch > 500:
         noise_variance *= train_attachment_loss / (model.template_points.size(0) * dimension)
-        model.lambda_ = ss_z_std
+        model.lambda_ = math.sqrt(ss_z_std)
 
         #############
         ### WRITE ###

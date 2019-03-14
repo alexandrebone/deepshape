@@ -143,8 +143,8 @@ def batched_bilinear_interpolation(velocity, points, bounding_box, grid_size):
         u1 = torch.floor(u.detach())
         v1 = torch.floor(v.detach())
 
-        u1 = torch.clamp(u1, 0, grid_size - 1)
-        v1 = torch.clamp(v1, 0, grid_size - 1)
+        u1 = torch.clamp(u1,     0, grid_size - 1)
+        v1 = torch.clamp(v1,     0, grid_size - 1)
         u2 = torch.clamp(u1 + 1, 0, grid_size - 1)
         v2 = torch.clamp(v1 + 1, 0, grid_size - 1)
 

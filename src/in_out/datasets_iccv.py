@@ -263,6 +263,8 @@ def create_cross_sectional_squares_dataset(path_to_meshes, number_of_meshes_trai
     connectivities = torch.stack(connectivities)
     splats = torch.stack(splats)
 
+    splats = (splats - torch.mean(splats)) / torch.std(splats)
+
     return (points[:number_of_meshes_train],
             connectivities[:number_of_meshes_train],
             splats[:number_of_meshes_train],
