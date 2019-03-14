@@ -79,7 +79,7 @@ if __name__ == '__main__':
     ############################
 
     if dataset == 'starmen':
-        experiment_prefix = '3_update_variance'
+        experiment_prefix = '4_update_lambda_from_the_start'
         path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data'))
 
         initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data/SimulatedData__EstimatedParameters__Template_starman__tp_22__age_70.00.vtk'))
@@ -90,7 +90,7 @@ if __name__ == '__main__':
         # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_encoder__epoch_9000__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
-        number_of_meshes_train = 32
+        number_of_meshes_train = 64
         number_of_meshes_test = 32
 
         splatting_grid_size = 16
@@ -104,6 +104,7 @@ if __name__ == '__main__':
         deformation_kernel_width = 3.
         splatting_kernel_width = 1.0
 
+        lambda_ = 1.
         noise_variance = 0.01 ** 2
         # noise_variance = 0.1 ** 2
 
@@ -126,11 +127,11 @@ if __name__ == '__main__':
             splatting_grid, splatting_kernel_width, dimension, random_seed=42)
 
         # OPTIMIZATION ------------------------------
-        number_of_epochs = 2000
+        number_of_epochs = 5000
         number_of_epochs_for_init = 100
         number_of_epochs_for_warm_up = 0
         print_every_n_iters = 100
-        save_every_n_iters = 500
+        save_every_n_iters = 1000
 
         learning_rate = 1e-3
         learning_rate_decay = 0.95
@@ -438,7 +439,7 @@ if __name__ == '__main__':
             initial_c = initial_c.cuda()
         model = BayesianAtlas(initial_p, initial_c,
                               bounding_box, latent_dimension, deformation_kernel_width,
-                              splatting_grid, deformation_grid, number_of_time_points)
+                              splatting_grid, deformation_grid, number_of_time_points, lambda_)
     elif dataset == 'hippocampi':
         noise_dimension = 10e3
 
@@ -457,7 +458,7 @@ if __name__ == '__main__':
 
         model = BayesianAtlas(initial_p, initial_c,
                               bounding_box, latent_dimension, deformation_kernel_width,
-                              splatting_grid, deformation_grid, number_of_time_points)
+                              splatting_grid, deformation_grid, number_of_time_points, lambda_)
     else:
         raise RuntimeError
 
@@ -696,6 +697,8 @@ if __name__ == '__main__':
         train_attachment_loss = 0.
         train_kullback_regularity_loss = 0.
         train_total_loss = 0.
+        ss_z_mean = 0.
+        ss_z_std = 0.
 
         indexes = np.random.permutation(number_of_meshes_train)
         for k in range(number_of_meshes_train // batch_size):  # drops the last batch
@@ -710,12 +713,16 @@ if __name__ == '__main__':
 
             # ENCODE, SAMPLE AND DECODE
             means, log_variances = model.encode(batch_target_splats)
+            stds = torch.exp(0.5 * log_variances)
+
+            ss_z_mean += torch.mean(means).cpu().detach().numpy()
+            ss_z_std += torch.mean(means ** 2 + stds ** 2).cpu().detach().numpy()
 
             if epoch < number_of_epochs_for_warm_up + 1:
                 batch_latent_momenta = means
                 deformed_template_points = model(batch_latent_momenta)
             else:
-                batch_latent_momenta = means + torch.zeros_like(means).normal_() * torch.exp(0.5 * log_variances)
+                batch_latent_momenta = means + torch.zeros_like(means).normal_() * stds
                 deformed_template_points = model(batch_latent_momenta)
 
             # LOSS
@@ -776,6 +783,8 @@ if __name__ == '__main__':
         train_attachment_loss /= float(batch_size * (number_of_meshes_train // batch_size))
         train_kullback_regularity_loss /= float(batch_size * (number_of_meshes_train // batch_size))
         train_total_loss /= float(batch_size * (number_of_meshes_train // batch_size))
+        ss_z_mean /= float(batch_size * (number_of_meshes_train // batch_size))
+        ss_z_std /= float(batch_size * (number_of_meshes_train // batch_size))
 
         ############
         ### TEST ###
@@ -867,8 +876,9 @@ if __name__ == '__main__':
         ### UPDATE ###
         ##############
 
-        # if epoch > 0 and epoch % 500 == 0:
+        # if epoch > 500:
         noise_variance *= train_attachment_loss / (model.template_points.size(0) * dimension)
+        model.lambda_ = ss_z_std
 
         #############
         ### WRITE ###
@@ -877,9 +887,11 @@ if __name__ == '__main__':
         if epoch % print_every_n_iters == 0 or epoch == number_of_epochs:
             log += cprint(
                 '\n[Epoch: %d] Learning rate = %.2E ; Noise std = %.2E ; Template latent q norm = %.3f'
+                '\nss_z_mean = %.2E ; ss_z_std = %.2E ; lambda = %.2E'
                 '\nTrain loss = %.3f (attachment = %.3f ; kullback regularity = %.3f)'
                 '\nTest  loss = %.3f (attachment = %.3f ; kullback regularity = %.3f)' %
                 (epoch, list(optimizer.param_groups)[0]['lr'], math.sqrt(noise_variance), template_latent_momenta_norm,
+                 ss_z_mean, ss_z_std, model.lambda_,
                  train_total_loss, train_attachment_loss, train_kullback_regularity_loss,
                  test_total_loss, test_attachment_loss, test_kullback_regularity_loss))
 

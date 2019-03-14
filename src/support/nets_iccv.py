@@ -208,7 +208,7 @@ class BayesianAtlas(nn.Module):
     def __init__(self,
                  template_points, template_connectivity,
                  bounding_box, latent_dimension, deformation_kernel_width,
-                 splatting_grid, deformation_grid, number_of_time_points):
+                 splatting_grid, deformation_grid, number_of_time_points, lambda_):
         nn.Module.__init__(self)
 
         self.deformation_grid = deformation_grid
@@ -224,6 +224,8 @@ class BayesianAtlas(nn.Module):
 
         self.number_of_time_points = number_of_time_points
         self.dt = 1. / float(number_of_time_points - 1)
+
+        self.lambda_ = lambda_
 
         # self.template_points = template_points
         self.template_points = nn.Parameter(template_points)
@@ -265,7 +267,7 @@ class BayesianAtlas(nn.Module):
             norm = norm.view(bts, 1, 1, 1).expand(v.size())
         elif dim == 3:
             norm = norm.view(bts, 1, 1, 1, 1).expand(v.size())
-        v = v * norm
+        v = v * norm * self.lambda_
 
         # GAUSSIAN SMOOTHING
         v = batched_vector_smoothing(v, dkw)
@@ -315,7 +317,7 @@ class BayesianAtlas(nn.Module):
             norm = norm.view(bts, 1, 1, 1).expand(v.size())
         elif dim == 3:
             norm = norm.view(bts, 1, 1, 1, 1).expand(v.size())
-        v = v * norm
+        v = v * norm * self.lambda_
 
         # GAUSSIAN SMOOTHING
         v = batched_vector_smoothing(v, dkw)
@@ -326,11 +328,11 @@ class BayesianAtlas(nn.Module):
                      prefix + '__', '__j_%d' % 0,
                      targets=[(elt_p.detach().cpu().numpy(), elt_c.detach().cpu().numpy())
                               for elt_p, elt_c in zip(points, connectivities)])
+        write_deformations(v, self.deformation_grid.detach().cpu().numpy(),
+                           prefix + '__', '__vfield')
 
         for t in range(ntp):
             x += batched_bilinear_interpolation(v, x, self.bounding_box, self.deformation_grid_size)
 
             write_meshes(x.detach().cpu().numpy(), self.template_connectivity.detach().cpu().numpy(),
                          prefix + '__', '__t_%d' % (t + 1))
-            write_deformations(v, self.deformation_grid.detach().cpu().numpy(),
-                               prefix + '__', '__vfield__t_%d' % (t))
