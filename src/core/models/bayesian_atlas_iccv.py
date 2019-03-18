@@ -36,9 +36,11 @@ if __name__ == '__main__':
     # dataset = 'hippocampi'
     # dataset = 'circles'
     # dataset = 'ellipsoids'
-    # dataset = 'starmen'
+    dataset = 'starmen'
     # dataset = 'leaves'
-    dataset = 'squares'
+    # dataset = 'squares'
+
+    print(dataset)
 
     number_of_meshes_train = 16
     number_of_meshes_test = 0
@@ -79,7 +81,7 @@ if __name__ == '__main__':
     ############################
 
     if dataset == 'starmen':
-        experiment_prefix = '4_update_lambda_from_the_start'
+        experiment_prefix = '7_new_scaling_and_new_init'
         path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data'))
 
         initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data/SimulatedData__EstimatedParameters__Template_starman__tp_22__age_70.00.vtk'))
@@ -90,21 +92,21 @@ if __name__ == '__main__':
         # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_encoder__epoch_9000__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
-        number_of_meshes_train = 64
-        number_of_meshes_test = 32
+        number_of_meshes_train = 1
+        number_of_meshes_test = 0
 
         splatting_grid_size = 16
         deformation_grid_size = 16
         visualization_grid_size = 16
 
         dimension = 2
-        latent_dimension = 2
+        latent_dimension = 1
         number_of_time_points = 5
 
         deformation_kernel_width = 3.
         splatting_kernel_width = 1.0
 
-        lambda_ = 1.
+        lambda_square = 0.1 ** 2
         noise_variance = 0.01 ** 2
         # noise_variance = 0.1 ** 2
 
@@ -128,16 +130,16 @@ if __name__ == '__main__':
 
         # OPTIMIZATION ------------------------------
         number_of_epochs = 5000
-        number_of_epochs_for_init = 100
+        number_of_epochs_for_init = 1000
         number_of_epochs_for_warm_up = 0
-        print_every_n_iters = 100
+        print_every_n_iters = 200
         save_every_n_iters = 1000
 
         learning_rate = 1e-3
         learning_rate_decay = 0.95
         learning_rate_ratio = 1.
 
-        batch_size = 32
+        batch_size = 1
 
         device = 'cuda:01'
         # device = 'cpu'
@@ -329,37 +331,40 @@ if __name__ == '__main__':
         # ----------------------------
 
     elif dataset == 'squares':
-        experiment_prefix = '1_first_attempt'
+        experiment_prefix = '3_first_attempt'
 
         path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/data'))
 
         initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__),
                                                             '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__Template_square.vtk'))
-        # initialize_encoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
-        #                                                    '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
-        # initialize_decoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
-        #                                                    '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
+        initialize_encoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
+                                                           '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
+        initialize_decoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
+                                                           '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
 
         # initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__3_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init__except_template/epoch_11000__model.pth'))
         # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__1_first_attempt/init_encoder__epoch_500__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
-        number_of_meshes_train = 64
+        # number_of_meshes_train = 224
+        number_of_meshes_train = 32
         # number_of_meshes_train = 441
-        number_of_meshes_test = 32
+
+        # number_of_meshes_test = 192
+        number_of_meshes_test = 0
 
         splatting_grid_size = 16
         deformation_grid_size = 16
         visualization_grid_size = 16
 
-        number_of_time_points = 5
+        number_of_time_points = 6
 
         dimension = 2
-        deformation_kernel_width = 0.5
+        deformation_kernel_width = 5.
         splatting_kernel_width = 0.2
 
         noise_variance = 0.01 ** 2
-        lambda_ = .01
+        lambda_square = .1 ** 2
 
         latent_dimension = 2
 
@@ -384,15 +389,15 @@ if __name__ == '__main__':
             splatting_grid, splatting_kernel_width, dimension, random_seed=42)
 
         # OPTIMIZATION --------------
-        number_of_epochs = 2500
+        number_of_epochs = 25000
         number_of_epochs_for_init = 500
         number_of_epochs_for_warm_up = 0
-        print_every_n_iters = 100
-        save_every_n_iters = 500
+        print_every_n_iters = 1000
+        save_every_n_iters = 1000
 
         learning_rate = 1e-3
         learning_rate_decay = 1.
-        learning_rate_ratio = 1e-2
+        learning_rate_ratio = 1e-1
 
         batch_size = 32
 
@@ -442,7 +447,7 @@ if __name__ == '__main__':
             initial_c = initial_c.cuda()
         model = BayesianAtlas(initial_p, initial_c,
                               bounding_box, latent_dimension, deformation_kernel_width,
-                              splatting_grid, deformation_grid, number_of_time_points, lambda_)
+                              splatting_grid, deformation_grid, number_of_time_points, lambda_square)
     elif dataset == 'hippocampi':
         noise_dimension = 10e3
 
@@ -461,7 +466,7 @@ if __name__ == '__main__':
 
         model = BayesianAtlas(initial_p, initial_c,
                               bounding_box, latent_dimension, deformation_kernel_width,
-                              splatting_grid, deformation_grid, number_of_time_points, lambda_)
+                              splatting_grid, deformation_grid, number_of_time_points, lambda_square)
     else:
         raise RuntimeError
 
@@ -546,7 +551,8 @@ if __name__ == '__main__':
                 attachment_loss = torch.sum((batch_latent_momenta - batch_latent_momenta__init) ** 2) / noise_variance
                 np_attachment_loss += attachment_loss.detach().cpu().numpy()
 
-                kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
+                kullback_regularity_loss = torch.sum(
+                    (means.pow(2) + log_variances.exp()) / lambda_square - log_variances + np.log(lambda_square))
                 np_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
                 total_loss = attachment_loss + kullback_regularity_loss
@@ -701,7 +707,7 @@ if __name__ == '__main__':
         train_kullback_regularity_loss = 0.
         train_total_loss = 0.
         ss_z_mean = 0.
-        ss_z_std = 0.
+        ss_z_var = 0.
 
         indexes = np.random.permutation(number_of_meshes_train)
         for k in range(number_of_meshes_train // batch_size):  # drops the last batch
@@ -719,7 +725,7 @@ if __name__ == '__main__':
             stds = torch.exp(0.5 * log_variances)
 
             ss_z_mean += torch.mean(means).cpu().detach().numpy()
-            ss_z_std += torch.mean(means ** 2 + stds ** 2).cpu().detach().numpy()
+            ss_z_var += torch.mean(means ** 2 + stds ** 2).cpu().detach().numpy()
 
             if epoch < number_of_epochs_for_warm_up + 1:
                 batch_latent_momenta = means
@@ -769,7 +775,8 @@ if __name__ == '__main__':
 
             train_attachment_loss += attachment_loss.detach().cpu().numpy()
 
-            kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
+            kullback_regularity_loss = torch.sum(
+                (means.pow(2) + log_variances.exp()) / lambda_square - log_variances + np.log(lambda_square))
             train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
             total_loss = attachment_loss + kullback_regularity_loss
@@ -787,7 +794,7 @@ if __name__ == '__main__':
         train_kullback_regularity_loss /= float(batch_size * (number_of_meshes_train // batch_size))
         train_total_loss /= float(batch_size * (number_of_meshes_train // batch_size))
         ss_z_mean /= float(batch_size * (number_of_meshes_train // batch_size))
-        ss_z_std /= float(batch_size * (number_of_meshes_train // batch_size))
+        ss_z_var /= float(batch_size * (number_of_meshes_train // batch_size))
 
         ############
         ### TEST ###
@@ -852,7 +859,8 @@ if __name__ == '__main__':
 
             test_attachment_loss += attachment_loss.detach().cpu().numpy()
 
-            kullback_regularity_loss = - torch.sum(1 + log_variances - means.pow(2) - log_variances.exp())
+            kullback_regularity_loss = torch.sum(
+                (means.pow(2) + log_variances.exp()) / lambda_square - log_variances + np.log(lambda_square))
             test_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
 
             total_loss = attachment_loss + kullback_regularity_loss
@@ -879,9 +887,9 @@ if __name__ == '__main__':
         ### UPDATE ###
         ##############
 
-        # if epoch > 500:
+        # if epoch > 100000:
         noise_variance *= train_attachment_loss / (model.template_points.size(0) * dimension)
-        model.lambda_ = math.sqrt(ss_z_std)
+        lambda_square = ss_z_var
 
         #############
         ### WRITE ###
@@ -890,11 +898,11 @@ if __name__ == '__main__':
         if epoch % print_every_n_iters == 0 or epoch == number_of_epochs:
             log += cprint(
                 '\n[Epoch: %d] Learning rate = %.2E ; Noise std = %.2E ; Template latent q norm = %.3f'
-                '\nss_z_mean = %.2E ; ss_z_std = %.2E ; lambda = %.2E'
+                '\nss_z_mean = %.2E ; ss_z_var = %.2E ; lambda = %.2E'
                 '\nTrain loss = %.3f (attachment = %.3f ; kullback regularity = %.3f)'
                 '\nTest  loss = %.3f (attachment = %.3f ; kullback regularity = %.3f)' %
                 (epoch, list(optimizer.param_groups)[0]['lr'], math.sqrt(noise_variance), template_latent_momenta_norm,
-                 ss_z_mean, ss_z_std, model.lambda_,
+                 ss_z_mean, ss_z_var, np.sqrt(lambda_square),
                  train_total_loss, train_attachment_loss, train_kullback_regularity_loss,
                  test_total_loss, test_attachment_loss, test_kullback_regularity_loss))
 

@@ -17,7 +17,10 @@ def cprint(str):
     return str + '\n'
 
 
-def batched_vector_smoothing(vector, sigma):
+def batched_vector_smoothing(vector, sigma, scaled=True):
+    """
+    https://discuss.pytorch.org/t/is-there-anyway-to-do-gaussian-filtering-for-an-image-2d-3d-in-pytorch/12351/3
+    """
     kernel_size = int(5. * sigma + .5)
     mean = (kernel_size - 1) / 2.
     variance = sigma ** 2.
@@ -27,8 +30,9 @@ def batched_vector_smoothing(vector, sigma):
         grid = torch.stack(torch.meshgrid([torch.arange(kernel_size),
                                            torch.arange(kernel_size)]), dim=-1).float().type(str(vector.type()))
         weights = torch.exp(- torch.sum((grid - mean) ** 2., dim=-1) / (2 * variance))
-        weights /= torch.sum(weights)
-        filter = nn.Conv2d(2, 2, kernel_size, groups=2, bias=False, padding=int(mean))
+        if scaled:
+            weights /= torch.sum(weights)
+        filter = nn.Conv2d(2, 2, kernel_size, groups=2, bias=False)
         filter.weight.data = weights.view(1, 1, kernel_size, kernel_size).repeat(2, 1, 1, 1)
 
     elif dim == 3:
@@ -36,15 +40,17 @@ def batched_vector_smoothing(vector, sigma):
                                            torch.arange(kernel_size),
                                            torch.arange(kernel_size)]), dim=-1).float().type(str(vector.type()))
         weights = torch.exp(- torch.sum((grid - mean) ** 2., dim=-1) / (2 * variance))
-        weights /= torch.sum(weights)
-        filter = nn.Conv3d(3, 3, kernel_size, groups=3, bias=False, padding=int(mean))
+        if scaled:
+            weights /= torch.sum(weights)
+        filter = nn.Conv3d(3, 3, kernel_size, groups=3, bias=False)
         filter.weight.data = weights.view(1, 1, kernel_size, kernel_size, kernel_size).repeat(3, 1, 1, 1, 1)
 
     else:
         assert False, 'Impossible dimension.'
 
     filter.weight.data.requires_grad_(False)
-    return filter(vector)
+    padded_vector = nn.functional.pad(vector, tuple([int(mean) for k in range(dim*2)]), mode='reflect')
+    return filter(padded_vector)
 
 
 def compute_bounding_box(points):

@@ -86,10 +86,11 @@ class Encoder2d(nn.Module):
     out: latent_dimension
     """
 
-    def __init__(self, in_grid_size, latent_dimension):
+    def __init__(self, in_grid_size, latent_dimension, init_var=1.):
         nn.Module.__init__(self)
         n = int(in_grid_size * 2 ** -4)
         self.latent_dimension = latent_dimension
+        self.init_var = init_var
         self.down1 = Conv2d_Tanh(2, 4)
         self.down2 = Conv2d_Tanh(4, 8)
         self.down3 = Conv2d_Tanh(8, 16)
@@ -104,7 +105,7 @@ class Encoder2d(nn.Module):
         x = self.down3(x)
         x = self.down4(x)
         m = self.linear1(x.view(x.size(0), -1)).view(x.size(0), -1)
-        s = self.linear2(x.view(x.size(0), -1)).view(x.size(0), -1)
+        s = self.linear2(x.view(x.size(0), -1)).view(x.size(0), -1) + np.log(self.init_var)
         return m, s
 
 
@@ -114,10 +115,11 @@ class Encoder3d(nn.Module):
     out: latent_dimension
     """
 
-    def __init__(self, in_grid_size, latent_dimension):
+    def __init__(self, in_grid_size, latent_dimension, init_var=1.):
         nn.Module.__init__(self)
         n = int(in_grid_size * 2 ** -4)
         self.latent_dimension = latent_dimension
+        self.init_var = init_var
         self.down1 = Conv3d_Tanh(3, 4)
         self.down2 = Conv3d_Tanh(4, 8)
         self.down3 = Conv3d_Tanh(8, 16)
@@ -134,7 +136,7 @@ class Encoder3d(nn.Module):
         x = self.down4(x)
         # x = self.down5(x)
         m = self.linear1(x.view(x.size(0), -1)).view(x.size(0), -1)
-        s = self.linear2(x.view(x.size(0), -1)).view(x.size(0), -1)
+        s = self.linear2(x.view(x.size(0), -1)).view(x.size(0), -1) + np.log(self.init_var)
         return m, s
 
 
@@ -190,6 +192,12 @@ class DeepDecoder3d(nn.Module):
         self.up4 = ConvTranspose3d_Tanh(4, 3, bias=False)
         print('>> DeepDecoder3d has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
 
+        # self.normalizer = 1.
+        # z = torch.from_numpy(np.array(1.)).float()
+        # m = self.forward(z)
+        # self.normalizer = torch.sqrt(torch.sum(v *, dim=tuple(range(1, dim+2))))
+
+
     def forward(self, x):
         batch_size = x.size(0)
         x = self.linear1(x)
@@ -208,8 +216,9 @@ class BayesianAtlas(nn.Module):
     def __init__(self,
                  template_points, template_connectivity,
                  bounding_box, latent_dimension, deformation_kernel_width,
-                 splatting_grid, deformation_grid, number_of_time_points, lambda_):
+                 splatting_grid, deformation_grid, number_of_time_points, initial_lambda_square=1.):
         nn.Module.__init__(self)
+        self.decode_count = 0
 
         self.deformation_grid = deformation_grid
         self.deformation_grid_size = deformation_grid.size(0)
@@ -225,17 +234,17 @@ class BayesianAtlas(nn.Module):
         self.number_of_time_points = number_of_time_points
         self.dt = 1. / float(number_of_time_points - 1)
 
-        self.lambda_ = lambda_
-
-        # self.template_points = template_points
-        self.template_points = nn.Parameter(template_points)
+        self.template_points = template_points
+        # self.template_points = nn.Parameter(template_points)
         print('>> Template points are %d x %d = %d parameters' % (
             template_points.size(0), template_points.size(1), template_points.size(0) * template_points.size(1)))
         if self.dimension == 2:
-            self.encoder = Encoder2d(self.splatting_grid_size, self.latent_dimension)
+            self.encoder = Encoder2d(self.splatting_grid_size, self.latent_dimension,
+                                     init_var=initial_lambda_square / np.sqrt(latent_dimension))
             self.decoder = DeepDecoder2d(self.latent_dimension, self.deformation_grid_size)
         elif self.dimension == 3:
-            self.encoder = Encoder3d(self.splatting_grid_size, self.latent_dimension)
+            self.encoder = Encoder3d(self.splatting_grid_size, self.latent_dimension, initial_lambda_square,
+                                     init_var=initial_lambda_square / np.sqrt(latent_dimension))
             self.decoder = DeepDecoder3d(self.latent_dimension, self.deformation_grid_size)
         else:
             raise RuntimeError
@@ -259,22 +268,30 @@ class BayesianAtlas(nn.Module):
         dim = self.dimension
 
         # DECODE
-        v = self.decoder(z)
-
-        # NORMALIZE
-        norm = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(torch.mean(v ** 2, tuple(range(2, dim+2))), dim=1))
-        if dim == 2:
-            norm = norm.view(bts, 1, 1, 1).expand(v.size())
-        elif dim == 3:
-            norm = norm.view(bts, 1, 1, 1, 1).expand(v.size())
-        v = v * norm * self.lambda_
+        m = self.decoder(z)
 
         # GAUSSIAN SMOOTHING
-        v = batched_vector_smoothing(v, dkw)
+        v = batched_vector_smoothing(m, dkw, scaled=False)
+
+        # NORMALIZE
+        # normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(torch.mean(v ** 2, dim=tuple(range(2, dim+2))), dim=1))
+        normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(v * m, dim=tuple(range(1, dim+2))))
+        # normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(torch.sum(v * m, dim=tuple(range(2, dim+2))), dim=1))
+
+        if dim == 2:
+            normalizer = normalizer.view(bts, 1, 1, 1).expand(v.size())
+        elif dim == 3:
+            normalizer = normalizer.view(bts, 1, 1, 1, 1).expand(v.size())
+        v = v * normalizer
+
+        if self.decode_count < 10:
+            print('>> normalizer  = %.3E ; max(abs(v)) = %.3E' %
+                  (normalizer.view(-1)[0].detach().cpu().numpy(), np.max(np.abs(v.detach().cpu().numpy()))))
+            self.decode_count += 1
 
         # FLOW
         x = self.template_points.clone().view(1, -1, self.dimension).repeat(bts, 1, 1)
-        for t in range(ntp):
+        for t in range(ntp - 1):
             x += batched_bilinear_interpolation(v, x, self.bounding_box, self.deformation_grid_size)
 
         return x
@@ -284,12 +301,13 @@ class BayesianAtlas(nn.Module):
         return self.decode(z)
 
     def tamper_template_gradient(self, kernel, gamma, lr, print_info=False):
-        tampered_template_gradient = (lr * kernel(gamma, self.template_points.detach(), self.template_points.detach(),
-                                                  self.template_points.grad.detach())).detach()
-        self.template_points.grad = tampered_template_gradient
-        if print_info:
-            print('tampered template gradient max absolute value = %.3f' %
-                  torch.max(torch.abs(tampered_template_gradient)))
+        pass
+        # tampered_template_gradient = (lr * kernel(gamma, self.template_points.detach(), self.template_points.detach(),
+        #                                           self.template_points.grad.detach())).detach()
+        # self.template_points.grad = tampered_template_gradient
+        # if print_info:
+        #     print('tampered template gradient max absolute value = %.3f' %
+        #           torch.max(torch.abs(tampered_template_gradient)))
 
     # def update_template(self, kernel, gamma, lr):
     #     update = - lr * kernel(
@@ -309,29 +327,32 @@ class BayesianAtlas(nn.Module):
         dim = self.dimension
 
         # DECODE
-        v = self.decoder(z)
-
-        # NORMALIZE
-        norm = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(torch.mean(v ** 2, tuple(range(2, dim + 2))), dim=1))
-        if dim == 2:
-            norm = norm.view(bts, 1, 1, 1).expand(v.size())
-        elif dim == 3:
-            norm = norm.view(bts, 1, 1, 1, 1).expand(v.size())
-        v = v * norm * self.lambda_
+        m = self.decoder(z)
+        write_deformations(m, self.deformation_grid.detach().cpu().numpy(), prefix + '__', '__vmom')
 
         # GAUSSIAN SMOOTHING
-        v = batched_vector_smoothing(v, dkw)
+        v = batched_vector_smoothing(m, dkw, scaled=False)
+        write_deformations(v, self.deformation_grid.detach().cpu().numpy(), prefix + '__', '__vfield_unscaled')
+
+        # NORMALIZE
+        # normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(torch.mean(v ** 2, tuple(range(2, dim + 2))), dim=1))
+        # normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(v * m, dim=tuple(range(1, dim + 2))))
+        normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(v * m, dim=tuple(range(1, dim + 2))))
+        if dim == 2:
+            normalizer = normalizer.view(bts, 1, 1, 1).expand(v.size())
+        elif dim == 3:
+            normalizer = normalizer.view(bts, 1, 1, 1, 1).expand(v.size())
+        v = v * normalizer
+        write_deformations(v, self.deformation_grid.detach().cpu().numpy(), prefix + '__', '__vfield')
 
         # FLOW AND WRITE
         x = self.template_points.clone().view(1, -1, self.dimension).repeat(bts, 1, 1)
         write_meshes(x.detach().cpu().numpy(), self.template_connectivity.detach().cpu().numpy(),
-                     prefix + '__', '__j_%d' % 0,
+                     prefix + '__', '__t_%d' % 0,
                      targets=[(elt_p.detach().cpu().numpy(), elt_c.detach().cpu().numpy())
                               for elt_p, elt_c in zip(points, connectivities)])
-        write_deformations(v, self.deformation_grid.detach().cpu().numpy(),
-                           prefix + '__', '__vfield')
 
-        for t in range(ntp):
+        for t in range(ntp - 1):
             x += batched_bilinear_interpolation(v, x, self.bounding_box, self.deformation_grid_size)
 
             write_meshes(x.detach().cpu().numpy(), self.template_connectivity.detach().cpu().numpy(),
