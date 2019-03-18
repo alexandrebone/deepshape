@@ -103,8 +103,9 @@ if __name__ == '__main__':
         latent_dimension = 1
         number_of_time_points = 5
 
-        deformation_kernel_width = 3.
-        splatting_kernel_width = 1.0
+        # deformation_kernel_width = 3.
+        deformation_kernel_width = 1.
+        splatting_kernel_width = 0.5
 
         lambda_square = 0.1 ** 2
         noise_variance = 0.01 ** 2
@@ -118,6 +119,11 @@ if __name__ == '__main__':
 
         bounding_box = torch.from_numpy(np.array([[-2.5, 2.5], [-2.5, 2.5]])).float()
         bounding_box_visualization = torch.from_numpy(np.array([[-2., 2.], [-2., 2.]])).float()
+
+        splatting_kernel_width, deformation_kernel_width = check_and_adapt_kernel_widths(
+            splatting_kernel_width, deformation_kernel_width,
+            splatting_grid_size, deformation_grid_size,
+            bounding_box.detach().numpy())
 
         splatting_grid = compute_grid(bounding_box, margin=0., grid_size=splatting_grid_size)
         deformation_grid = compute_grid(bounding_box, margin=0., grid_size=deformation_grid_size)

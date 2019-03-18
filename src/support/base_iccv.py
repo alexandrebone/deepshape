@@ -49,7 +49,7 @@ def batched_vector_smoothing(vector, sigma, scaled=True):
         assert False, 'Impossible dimension.'
 
     filter.weight.data.requires_grad_(False)
-    padded_vector = nn.functional.pad(vector, tuple([int(mean) for k in range(dim*2)]), mode='reflect')
+    padded_vector = nn.functional.pad(vector, tuple([int(mean) for k in range(dim * 2)]), mode='reflect')
     return filter(padded_vector)
 
 
@@ -80,6 +80,38 @@ def compute_grid(bounding_box, margin=0.1, grid_size=64):
         grid = np.swapaxes(grid, d, d + 1)
 
     return torch.from_numpy(grid).float()
+
+
+def check_and_adapt_kernel_widths(splatting_kernel_width, deformation_kernel_width,
+                                  splatting_grid_size, deformation_grid_size,
+                                  bounding_box):
+
+    # Splatting.
+    dx_splatting = np.max(bounding_box[:, 1] - bounding_box[:, 0]) / float(splatting_grid_size - 1)
+    if dx_splatting <= splatting_kernel_width / 3.:
+        print('>> [OK].      splatting_grid_step = %.2f %% splatting_kernel_width' %
+              (100. * dx_splatting / splatting_kernel_width))
+    elif dx_splatting > splatting_kernel_width:
+        print('>> [OULALA].  splatting_grid_step = %.2f %% splatting_kernel_width' %
+              (100. * dx_splatting / splatting_kernel_width))
+    else:
+        print('>> [WARNING]. splatting_grid_step = %.2f %% splatting_kernel_width' %
+              (100. * dx_splatting / splatting_kernel_width))
+
+    # Deformation.
+    dx_deformation = np.max(bounding_box[:, 1] - bounding_box[:, 0]) / float(deformation_grid_size - 1)
+    if dx_deformation <= deformation_kernel_width / 3.:
+        print('>> [OK].      deformation_grid_step = %.2f %% deformation_kernel_width' %
+              (100. * dx_splatting / deformation_kernel_width))
+    elif dx_deformation > deformation_kernel_width:
+        print('>> [OULALA].  deformation_grid_step = %.2f %% deformation_kernel_width' %
+              (100. * dx_splatting / deformation_kernel_width))
+    else:
+        print('>> [WARNING]. deformation_grid_step = %.2f %% deformation_kernel_width' %
+              (100. * dx_splatting / deformation_kernel_width))
+
+    return splatting_kernel_width, deformation_kernel_width / dx_deformation
+
 
 
 def bilinear_interpolation(velocity, points, bounding_box, grid_size):
@@ -149,8 +181,8 @@ def batched_bilinear_interpolation(velocity, points, bounding_box, grid_size):
         u1 = torch.floor(u.detach())
         v1 = torch.floor(v.detach())
 
-        u1 = torch.clamp(u1,     0, grid_size - 1)
-        v1 = torch.clamp(v1,     0, grid_size - 1)
+        u1 = torch.clamp(u1, 0, grid_size - 1)
+        v1 = torch.clamp(v1, 0, grid_size - 1)
         u2 = torch.clamp(u1 + 1, 0, grid_size - 1)
         v2 = torch.clamp(v1 + 1, 0, grid_size - 1)
 
