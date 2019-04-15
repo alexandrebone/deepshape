@@ -197,7 +197,6 @@ class DeepDecoder3d(nn.Module):
         # m = self.forward(z)
         # self.normalizer = torch.sqrt(torch.sum(v *, dim=tuple(range(1, dim+2))))
 
-
     def forward(self, x):
         batch_size = x.size(0)
         x = self.linear1(x)
@@ -234,8 +233,8 @@ class BayesianAtlas(nn.Module):
         self.number_of_time_points = number_of_time_points
         self.dt = 1. / float(number_of_time_points - 1)
 
-        self.template_points = template_points
-        # self.template_points = nn.Parameter(template_points)
+        # self.template_points = template_points
+        self.template_points = nn.Parameter(template_points)
         print('>> Template points are %d x %d = %d parameters' % (
             template_points.size(0), template_points.size(1), template_points.size(0) * template_points.size(1)))
         if self.dimension == 2:
@@ -243,7 +242,7 @@ class BayesianAtlas(nn.Module):
                                      init_var=initial_lambda_square / np.sqrt(latent_dimension))
             self.decoder = DeepDecoder2d(self.latent_dimension, self.deformation_grid_size)
         elif self.dimension == 3:
-            self.encoder = Encoder3d(self.splatting_grid_size, self.latent_dimension, initial_lambda_square,
+            self.encoder = Encoder3d(self.splatting_grid_size, self.latent_dimension,
                                      init_var=initial_lambda_square / np.sqrt(latent_dimension))
             self.decoder = DeepDecoder3d(self.latent_dimension, self.deformation_grid_size)
         else:
@@ -274,9 +273,11 @@ class BayesianAtlas(nn.Module):
         v = batched_vector_smoothing(m, dkw, scaled=False)
 
         # NORMALIZE
-        # normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(torch.mean(v ** 2, dim=tuple(range(2, dim+2))), dim=1))
-        normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(v * m, dim=tuple(range(1, dim+2))))
-        # normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(torch.sum(v * m, dim=tuple(range(2, dim+2))), dim=1))
+        z_norm_squared = torch.sum(z ** 2, dim=1)
+        v_norm_squared = torch.sum(v * m, dim=tuple(range(1, dim + 2)))
+        normalizer = torch.where(z_norm_squared > 1e-10,
+                                 torch.sqrt(z_norm_squared / v_norm_squared),
+                                 torch.from_numpy(np.array(0.0)).float().type(str(z.type())))
 
         if dim == 2:
             normalizer = normalizer.view(bts, 1, 1, 1).expand(v.size())
@@ -286,7 +287,7 @@ class BayesianAtlas(nn.Module):
 
         if self.decode_count < 10:
             print('>> normalizer  = %.3E ; max(abs(v)) = %.3E' %
-                  (normalizer.view(-1)[0].detach().cpu().numpy(), np.max(np.abs(v.detach().cpu().numpy()))))
+                  (normalizer.detach().cpu().numpy().reshape(-1)[0], np.max(np.abs(v.detach().cpu().numpy()))))
             self.decode_count += 1
 
         # FLOW
@@ -300,14 +301,40 @@ class BayesianAtlas(nn.Module):
         # print('>> Please avoid this forward method.')
         return self.decode(z)
 
-    def tamper_template_gradient(self, kernel, gamma, lr, print_info=False):
-        pass
-        # tampered_template_gradient = (lr * kernel(gamma, self.template_points.detach(), self.template_points.detach(),
+    def tamper_template_gradient(self, kernel, gamma, lr, print_info=False, zero=False):
+        # pass
+
+        template_gradient = self.template_points.grad.detach()
+
+        norms = torch.sqrt(torch.sum(template_gradient ** 2, dim=1))
+        std_robust = 1.4826 * torch.median(torch.abs(norms - torch.median(norms)))
+
+        cutoff_factor = 2.5
+        threshold = torch.median(norms) + cutoff_factor * std_robust
+        norms = norms.contiguous().view(-1, 1).expand(template_gradient.size())
+        cutoff_template_gradient = torch.where(
+            norms > threshold,
+            cutoff_factor * std_robust * template_gradient / norms,
+            template_gradient)
+
+        tampered_template_gradient = lr * convolve(
+            self.template_points.detach(), self.template_points.detach(), cutoff_template_gradient, torch.sqrt(1/gamma))
+        # tampered_template_gradient = (lr * kernel(gamma, cutoff_template_gradient, self.template_points.detach(),
         #                                           self.template_points.grad.detach())).detach()
-        # self.template_points.grad = tampered_template_gradient
-        # if print_info:
-        #     print('tampered template gradient max absolute value = %.3f' %
-        #           torch.max(torch.abs(tampered_template_gradient)))
+
+        # write_gradient('grad.vtk', template_gradient, self.template_points.detach())
+        # write_gradient('grad_normalized.vtk', template_gradient / norms, self.template_points.detach())
+        # write_gradient('grad_cutoff.vtk', cutoff_template_gradient, self.template_points.detach())
+        # write_gradient('grad_smoothed.vtk', tampered_template_gradient, self.template_points.detach())
+
+        if zero:
+            self.template_points.grad = tampered_template_gradient * 0.0
+        else:
+            self.template_points.grad = tampered_template_gradient
+
+        if print_info:
+            print('tampered template gradient max absolute value = %.3f' %
+                  torch.max(torch.abs(tampered_template_gradient)))
 
     # def update_template(self, kernel, gamma, lr):
     #     update = - lr * kernel(
@@ -315,7 +342,6 @@ class BayesianAtlas(nn.Module):
     #     self.template_points = self.template_points.detach() + update
     #     self.template_points.requires_grad_()
     #     print('template update min = %.3f ; max = %.3f' % (torch.min(update), torch.max(update)))
-
 
     def write_meshes(self, splats, points, connectivities, prefix):
 
@@ -335,13 +361,17 @@ class BayesianAtlas(nn.Module):
         write_deformations(v, self.deformation_grid.detach().cpu().numpy(), prefix + '__', '__vfield_unscaled')
 
         # NORMALIZE
-        # normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(torch.mean(v ** 2, tuple(range(2, dim + 2))), dim=1))
-        # normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(v * m, dim=tuple(range(1, dim + 2))))
-        normalizer = torch.sqrt(torch.sum(z ** 2, dim=1) / torch.sum(v * m, dim=tuple(range(1, dim + 2))))
+        z_norm_squared = torch.sum(z ** 2, dim=1)
+        v_norm_squared = torch.sum(v * m, dim=tuple(range(1, dim + 2)))
+        normalizer = torch.where(z_norm_squared > 1e-10,
+                                 torch.sqrt(z_norm_squared / v_norm_squared),
+                                 torch.from_numpy(np.array(0.0)).float().type(str(z.type())))
+
         if dim == 2:
             normalizer = normalizer.view(bts, 1, 1, 1).expand(v.size())
         elif dim == 3:
             normalizer = normalizer.view(bts, 1, 1, 1, 1).expand(v.size())
+
         v = v * normalizer
         write_deformations(v, self.deformation_grid.detach().cpu().numpy(), prefix + '__', '__vfield')
 

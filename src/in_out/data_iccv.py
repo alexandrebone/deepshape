@@ -173,6 +173,41 @@ def write_deformation(fn, vfield, grid):
     writer.Update()
 
 
+def write_gradient(fn, vfield, grid):
+    dimension = vfield.size(1)
+
+    x = grid.detach().cpu().numpy()
+    v = vfield.detach().cpu().numpy()
+
+    poly_data = vtkPolyData()
+    points = vtkPoints()
+
+    if dimension == 3:
+        for i, x_ in enumerate(x):
+            points.InsertPoint(i, x_)
+    else:
+        for i, x_ in enumerate(x):
+            points.InsertPoint(i, np.concatenate([x_, [0.]]))
+
+    poly_data.SetPoints(points)
+
+    vectors = vtkDoubleArray()
+    vectors.SetNumberOfComponents(3)
+    if dimension == 3:
+        for v_ in v:
+            vectors.InsertNextTuple(v_)
+    else:
+        for v_ in v:
+            vectors.InsertNextTuple(np.concatenate([v_, [0.]]))
+
+    poly_data.GetPointData().SetVectors(vectors)
+
+    writer = vtkPolyDataWriter()
+    writer.SetInputData(poly_data)
+    writer.SetFileName(fn)
+    writer.Update()
+
+
 def compute_centers_and_normals(points, connectivity):
     dimension = points.shape[1]
     a = points[connectivity[:, 0]]

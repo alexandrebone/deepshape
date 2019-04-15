@@ -36,11 +36,12 @@ if __name__ == '__main__':
     # dataset = 'hippocampi'
     # dataset = 'circles'
     # dataset = 'ellipsoids'
-    dataset = 'starmen'
+    # dataset = 'starmen'
     # dataset = 'leaves'
     # dataset = 'squares'
+    dataset = 'surprise'
 
-    print(dataset)
+    print('>> Run with the [ %s ] dataset.' % dataset)
 
     number_of_meshes_train = 16
     number_of_meshes_test = 0
@@ -74,6 +75,7 @@ if __name__ == '__main__':
 
     # device = 'cuda:01'
     device = 'cpu'
+    omp_num_threads = 4
     # -------------------------------------------
 
     ############################
@@ -258,38 +260,39 @@ if __name__ == '__main__':
         # ----------------------------
 
     elif dataset == 'hippocampi':
-        experiment_prefix = '1_first_attempt'
+        experiment_prefix = '3__zero_padding__q_20'
 
-        path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/hippocampi/data'))
+        path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/hippocampi/data_organized'))
 
-        initialize_template = os.path.join(path_to_meshes,
+        initialize_template = os.path.join(path_to_meshes, '../data',
                                            'PrincipalGeodesicAnalysis__EstimatedParameters__Template_hippocampus.vtk')
         # initialize_encoder = os.path.join(path_to_meshes,
         #                                   'PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt')
         # initialize_decoder = os.path.join(path_to_meshes,
         #                                   'PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt')
 
-        # initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/hippocampi/output__49_bayesian_atlas_fourier__latent_10__162_subjects/epoch_0__model.pth'))
+        initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/hippocampi/output__2_subject_selection__q_20/epoch_1000__model.pth'))
         # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_encoder__epoch_9000__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
-        number_of_meshes_train = 1
-        number_of_meshes_test = 0
+        number_of_meshes_train = 225
+        number_of_meshes_test = 75
 
         splatting_grid_size = 16
         deformation_grid_size = 16
         visualization_grid_size = 16
 
-        number_of_time_points = 5
+        number_of_time_points = 6
 
         dimension = 3
-        latent_dimension = 10
+        latent_dimension = 20
 
-        deformation_kernel_width = 3.
+        deformation_kernel_width = 10.
         splatting_kernel_width = 5.
         varifold_kernel_width = 5.
 
         noise_variance = 0.1 ** 2
+        lambda_square = 7. ** 2
 
         gamma_splatting = torch.from_numpy(np.array([1. / splatting_kernel_width ** 2.])).float()
         gamma_varifold = torch.from_numpy(np.array([1. / varifold_kernel_width ** 2.])).float()
@@ -307,54 +310,59 @@ if __name__ == '__main__':
         bounding_box = torch.from_numpy(np.array([[0., 50.], [-50., 5.], [-40., 15.]])).float()
         bounding_box_visualization = bounding_box
 
+        splatting_kernel_width, deformation_kernel_width = check_and_adapt_kernel_widths(
+            splatting_kernel_width, deformation_kernel_width,
+            splatting_grid_size, deformation_grid_size,
+            bounding_box.detach().numpy())
+
         splatting_grid = compute_grid(bounding_box, margin=0., grid_size=splatting_grid_size)
         deformation_grid = compute_grid(bounding_box, margin=0., grid_size=deformation_grid_size)
         visualization_grid = compute_grid(bounding_box_visualization, margin=0., grid_size=visualization_grid_size)
 
         (points, connectivities, centers, normals, norms, splats,
          points_test, connectivities_test, centers_test, normals_test, norms_test, splats_test) = \
-            create_cross_sectional_hippocampi_dataset(
+            create_cross_sectional_hippocampi_dataset_3classes(
                 path_to_meshes,
                 number_of_meshes_train, number_of_meshes_test,
                 splatting_grid, dimension, gkernel, gamma_splatting, random_seed=42)
 
         # OPTIMIZATION --------------
-        number_of_epochs = 2000
-        number_of_epochs_for_init = 25000
+        number_of_epochs = 10000
+        number_of_epochs_for_init = 2000
         number_of_epochs_for_warm_up = 0
 
-        print_every_n_iters = 1
+        print_every_n_iters = 100
         save_every_n_iters = 500
 
-        learning_rate = 1e-2
+        learning_rate = 1e-3
         learning_rate_decay = 1.
-        learning_rate_ratio = 5e-5
+        learning_rate_ratio = 1e-2
 
-        batch_size = 1
+        batch_size = 32
 
         device = 'cuda:01'
         # device = 'cpu'
         # ----------------------------
 
     elif dataset == 'squares':
-        experiment_prefix = '3_first_attempt'
+        experiment_prefix = '5_full_run__no_scaling'
 
         path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/data'))
 
         initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__),
                                                             '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__Template_square.vtk'))
-        initialize_encoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
-                                                           '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
-        initialize_decoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
-                                                           '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
+        # initialize_encoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
+        #                                                    '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
+        # initialize_decoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
+        #                                                    '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
 
-        # initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__3_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init__except_template/epoch_11000__model.pth'))
+        # initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__4_full_run/epoch_0__model.pth'))
         # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__1_first_attempt/init_encoder__epoch_500__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
         # number_of_meshes_train = 224
-        number_of_meshes_train = 32
-        # number_of_meshes_train = 441
+        # number_of_meshes_train = 32
+        number_of_meshes_train = 441
 
         # number_of_meshes_test = 192
         number_of_meshes_test = 0
@@ -366,23 +374,30 @@ if __name__ == '__main__':
         number_of_time_points = 6
 
         dimension = 2
-        deformation_kernel_width = 5.
+        latent_dimension = 2
+
+        # deformation_kernel_width = 5.
+        deformation_kernel_width = 0.5
         splatting_kernel_width = 0.2
 
         noise_variance = 0.01 ** 2
-        lambda_square = .1 ** 2
-
-        latent_dimension = 2
+        lambda_square = 1. ** 2
 
         gamma_splatting = torch.from_numpy(np.array([1. / splatting_kernel_width ** 2.])).float()
+        gamma_deformation = torch.from_numpy(np.array([1. / deformation_kernel_width ** 2.])).float()
         gkernel = Genred("Exp( - G * SqDist(X, Y) ) * P",
                          ['G = Pm(1)', 'X = Vx(2)', 'Y = Vy(2)', 'P = Vy(2)'],
                          reduction_op='Sum', axis=1)
         print('>> Gaussian kernel formula: %s' % gkernel.formula)
 
-        # bounding_box = torch.from_numpy(np.array([[-1., 1.], [-1., 1.]])).float()
-        bounding_box = torch.from_numpy(np.array([[-0.8, 0.8], [-0.8, 0.8]])).float()
+        bounding_box = torch.from_numpy(np.array([[-1., 1.], [-1., 1.]])).float()
+        # bounding_box = torch.from_numpy(np.array([[-0.8, 0.8], [-0.8, 0.8]])).float()
         bounding_box_visualization = torch.from_numpy(np.array([[-2., 2.], [-2., 2.]])).float()
+
+        splatting_kernel_width, deformation_kernel_width = check_and_adapt_kernel_widths(
+            splatting_kernel_width, deformation_kernel_width,
+            splatting_grid_size, deformation_grid_size,
+            bounding_box.detach().numpy())
 
         splatting_grid = compute_grid(bounding_box, margin=0., grid_size=splatting_grid_size)
         deformation_grid = compute_grid(bounding_box, margin=0., grid_size=deformation_grid_size)
@@ -395,17 +410,92 @@ if __name__ == '__main__':
             splatting_grid, splatting_kernel_width, dimension, random_seed=42)
 
         # OPTIMIZATION --------------
-        number_of_epochs = 25000
-        number_of_epochs_for_init = 500
+        number_of_epochs = 10000
+        number_of_epochs_for_init = 25000
         number_of_epochs_for_warm_up = 0
-        print_every_n_iters = 1000
-        save_every_n_iters = 1000
+        print_every_n_iters = 100
+        save_every_n_iters = 500
 
         learning_rate = 1e-3
         learning_rate_decay = 1.
         learning_rate_ratio = 1e-1
 
-        batch_size = 32
+        batch_size = 64
+
+        device = 'cuda:01'
+        # device = 'cpu'
+        # ----------------------------
+
+    elif dataset == 'surprise':
+        experiment_prefix = '16__no_cheek__full_dataset__update_minibatch__smoother'
+
+        path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/surprise/data_no_cheek'))
+
+        initialize_template = os.path.normpath(os.path.join(
+            os.path.dirname(__file__),
+            '../../../examples/surprise/data_no_cheek/ForInitialization__Template__FromUser__Subdivided.vtk'))
+
+        number_of_meshes_train = 404
+        number_of_meshes_test = 0
+
+        splatting_grid_size = 32
+        deformation_grid_size = 32
+
+        number_of_time_points = 6
+
+        dimension = 2
+        latent_dimension = 5
+
+        deformation_kernel_width = 0.02
+        splatting_kernel_width = 0.01
+        varifold_kernel_width = 0.01
+
+        noise_variance = 0.002 ** 2
+        lambda_square = 0.0005 ** 2
+
+        gamma_splatting = torch.from_numpy(np.array([1. / splatting_kernel_width ** 2.])).float()
+        gamma_varifold = torch.from_numpy(np.array([1. / varifold_kernel_width ** 2.])).float()
+        gamma_deformation = torch.from_numpy(np.array([1. / deformation_kernel_width ** 2.])).float()
+        gkernel = Genred("Exp( - G * SqDist(X, Y) ) * P",
+                         ['G = Pm(1)', 'X = Vx(2)', 'Y = Vy(2)', 'P = Vy(2)'],
+                         reduction_op='Sum', axis=1)
+        vkernel = Genred("Exp( - G * SqDist(X, Y) ) * Square( (Nx | Ny) ) * P",
+                         ['G = Pm(1)', 'X = Vx(2)', 'Y = Vy(2)', 'Nx = Vx(2)', 'Ny = Vy(2)', 'P = Vy(1)'],
+                         reduction_op='Sum', axis=1)
+        print('>> Gaussian kernel formula: %s' % gkernel.formula)
+        print('>> Varifold kernel formula: %s' % vkernel.formula)
+
+
+        # bounding_box = torch.from_numpy(np.array([[-1., 1.], [-1., 1.]])).float()
+        # bounding_box = torch.from_numpy(np.array([[-0.225, 0.225], [-0.25, 0.2]])).float()
+        bounding_box = torch.from_numpy(np.array([[-0.15, 0.15], [-0.17, 0.13]])).float()
+
+        splatting_kernel_width, deformation_kernel_width = check_and_adapt_kernel_widths(
+            splatting_kernel_width, deformation_kernel_width,
+            splatting_grid_size, deformation_grid_size,
+            bounding_box.detach().numpy())
+
+        splatting_grid = compute_grid(bounding_box, margin=0., grid_size=splatting_grid_size)
+        deformation_grid = compute_grid(bounding_box, margin=0., grid_size=deformation_grid_size)
+
+        (points, connectivities, centers, normals, norms, splats,
+         points_test, connectivities_test, centers_test, normals_test, norms_test, splats_test) = create_cross_sectional_surprise_dataset(
+            os.path.normpath(os.path.join(os.path.dirname(__file__), path_to_meshes)),
+            number_of_meshes_train, number_of_meshes_test,
+            splatting_grid, dimension, gkernel, gamma_splatting, random_seed=42)
+
+        # OPTIMIZATION --------------
+        number_of_epochs = 10000
+        number_of_epochs_for_init = 25000
+        number_of_epochs_for_warm_up = 0
+        print_every_n_iters = 100
+        save_every_n_iters = 500
+
+        learning_rate = 1e-3
+        learning_rate_decay = 1.
+        learning_rate_ratio = 1e-8
+
+        batch_size = 404
 
         device = 'cuda:01'
         # device = 'cpu'
@@ -439,8 +529,6 @@ if __name__ == '__main__':
     np.random.seed()
 
     if dataset in ['circles', 'ellipsoids', 'starmen', 'leaves', 'squares']:
-        noise_dimension = points.size(1)
-
         if initialize_template is not None:
             initial_p, initial_c = read_vtk_file(initialize_template, dimension=dimension, extract_connectivity=True)
         else:
@@ -454,9 +542,10 @@ if __name__ == '__main__':
         model = BayesianAtlas(initial_p, initial_c,
                               bounding_box, latent_dimension, deformation_kernel_width,
                               splatting_grid, deformation_grid, number_of_time_points, lambda_square)
-    elif dataset == 'hippocampi':
-        noise_dimension = 10e3
 
+        noise_dimension = model.template_points.size(0) * dimension
+
+    elif dataset in ['hippocampi', 'surprise']:
         if initialize_template is not None:
             initial_p, initial_c = read_vtk_file(initialize_template, dimension=dimension, extract_connectivity=True)
         else:
@@ -473,8 +562,38 @@ if __name__ == '__main__':
         model = BayesianAtlas(initial_p, initial_c,
                               bounding_box, latent_dimension, deformation_kernel_width,
                               splatting_grid, deformation_grid, number_of_time_points, lambda_square)
+
+        # bb = bounding_box.detach().numpy()
+        # noise_dimension = 1
+        # for d in range(dimension):
+        #     length = bb[d, 1] - bb[d, 0]
+        #     assert length >= 0
+        #     noise_dimension *= math.floor(length / splatting_kernel_width + 1.0)
+        # noise_dimension *= dimension
+
+        noise_dimension = (splatting_grid_size ** dimension) * dimension
+
+    # elif dataset == 'surprise':
+    #     initial_p, initial_c = read_vtk_file(initialize_template, dimension=dimension, extract_connectivity=True)
+    #     if 'cuda' in device:
+    #         initial_p = initial_p.cuda()
+    #         initial_c = initial_c.cuda()
+    #     model = BayesianAtlas(initial_p, initial_c,
+    #                           bounding_box, latent_dimension, deformation_kernel_width,
+    #                           splatting_grid, deformation_grid, number_of_time_points, lambda_square)
+    #
+    #     points = torch.stack(points)
+    #     # points_test = torch.stack(points_test)
+    #     connectivities = torch.stack(connectivities)
+    #     # connectivities_test = torch.stack(connectivities_test)
+    #
+    #     noise_dimension = model.template_points.size(0) * dimension
+
+
     else:
         raise RuntimeError
+
+    print('>> noise_dimension = %d' % noise_dimension)
 
     # optimizer = Adam(model.parameters(), lr=learning_rate)
     # optimizer = Adam([model.template_points], lr=learning_rate)
@@ -489,14 +608,14 @@ if __name__ == '__main__':
         model.bounding_box = model.bounding_box.cuda()
         splatting_grid = splatting_grid.cuda()
         deformation_grid = deformation_grid.cuda()
-        visualization_grid = visualization_grid.cuda()
 
         splats = splats.cuda()
         splats_test = splats_test.cuda()
 
         gamma_splatting = gamma_splatting.cuda()
+        gamma_deformation = gamma_deformation.cuda()
 
-        if dataset == 'hippocampi':
+        if dataset in ['hippocampi', 'surprise']:
             gamma_varifold = gamma_varifold.cuda()
 
             centers = [elt.cuda() for elt in centers]
@@ -517,8 +636,13 @@ if __name__ == '__main__':
             points = points.cuda()
             connectivities = connectivities.cuda()
 
-            points_test = points_test.cuda()
-            connectivities_test = connectivities_test.cuda()
+            # points_test = points_test.cuda()
+            # connectivities_test = connectivities_test.cuda()
+
+    elif device == 'cpu':
+        print('>> OMP_NUM_THREADS will be set to ' + str(omp_num_threads))
+        os.environ['OMP_NUM_THREADS'] = str(omp_num_threads)
+        torch.set_num_threads(omp_num_threads)
 
     ########################
     ###### INITIALIZE ######
@@ -675,6 +799,7 @@ if __name__ == '__main__':
 
             initial_decoder_state = os.path.join(output_dir,
                                                  'init_decoder__epoch_%d__model.pth' % number_of_epochs_for_init)
+        model.decode_count = 0
 
     # LOAD INITIALIZATIONS ----------------------------------------
     if initial_encoder_state is not None:
@@ -709,14 +834,15 @@ if __name__ == '__main__':
         ### TRAIN ###
         #############
 
-        train_attachment_loss = 0.
-        train_kullback_regularity_loss = 0.
-        train_total_loss = 0.
-        ss_z_mean = 0.
-        ss_z_var = 0.
-
         indexes = np.random.permutation(number_of_meshes_train)
         for k in range(number_of_meshes_train // batch_size):  # drops the last batch
+
+            train_attachment_loss = 0.
+            train_kullback_regularity_loss = 0.
+            train_total_loss = 0.
+            ss_z_mean = 0.
+            ss_z_var = 0.
+
             batch_target_splats = splats[indexes[k * batch_size:(k + 1) * batch_size]]
 
             if dimension == 2:
@@ -745,7 +871,7 @@ if __name__ == '__main__':
                 batch_target_points = points[indexes[k * batch_size:(k + 1) * batch_size]]
                 attachment_loss = torch.sum((deformed_template_points - batch_target_points) ** 2) / noise_variance
 
-            elif dataset == 'hippocampi':
+            elif dataset in ['hippocampi', 'surprise']:
                 batch_target_centers = [centers[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
                 batch_target_normals = [normals[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
                 batch_target_norms = [norms[index] for index in indexes[k * batch_size:(k + 1) * batch_size]]
@@ -779,28 +905,46 @@ if __name__ == '__main__':
             else:
                 raise RuntimeError
 
-            train_attachment_loss += attachment_loss.detach().cpu().numpy()
+            train_attachment_loss = attachment_loss.detach().cpu().numpy()
 
             kullback_regularity_loss = torch.sum(
                 (means.pow(2) + log_variances.exp()) / lambda_square - log_variances + np.log(lambda_square))
-            train_kullback_regularity_loss += kullback_regularity_loss.detach().cpu().numpy()
+            train_kullback_regularity_loss = kullback_regularity_loss.detach().cpu().numpy()
 
             total_loss = attachment_loss + kullback_regularity_loss
             # total_loss = attachment_loss
-            train_total_loss += total_loss.detach().cpu().numpy()
+            train_total_loss = total_loss.detach().cpu().numpy()
 
             # GRADIENT STEP
             optimizer.zero_grad()
             total_loss.backward()
-            model.tamper_template_gradient(gkernel, gamma_splatting, learning_rate_ratio, epoch < 20)
+            if dataset == 'surprise':
+                # model.tamper_template_gradient(gkernel, 2. * gamma_deformation, learning_rate_ratio, epoch < 5, epoch < 1000)
+                model.tamper_template_gradient(gkernel, gamma_deformation / 3.5 ** 2, learning_rate_ratio, epoch < 5)
+            elif dataset == 'squares':
+                model.tamper_template_gradient(gkernel, gamma_splatting, learning_rate_ratio, epoch < 5)
+            else:
+                model.tamper_template_gradient(gkernel, gamma_deformation, learning_rate_ratio, epoch < 5)
             optimizer.step()
             # model.update_template(gkernel, gamma_splatting, learning_rate_ratio * list(optimizer.param_groups)[0]['lr'])
 
-        train_attachment_loss /= float(batch_size * (number_of_meshes_train // batch_size))
-        train_kullback_regularity_loss /= float(batch_size * (number_of_meshes_train // batch_size))
-        train_total_loss /= float(batch_size * (number_of_meshes_train // batch_size))
-        ss_z_mean /= float(batch_size * (number_of_meshes_train // batch_size))
-        ss_z_var /= float(batch_size * (number_of_meshes_train // batch_size))
+            ##############
+            ### UPDATE ###
+            ##############
+
+            train_attachment_loss /= float(batch_size)
+            train_kullback_regularity_loss /= float(batch_size)
+            train_total_loss /= float(batch_size)
+            ss_z_mean /= float(batch_size)
+            ss_z_var /= float(batch_size)
+
+            if dataset == 'surprise':
+                if epoch > 1000:
+                    noise_variance *= train_attachment_loss / float(noise_dimension)
+                    lambda_square = ss_z_var
+            else:
+                noise_variance *= train_attachment_loss / float(noise_dimension)
+                lambda_square = ss_z_var
 
         ############
         ### TEST ###
@@ -810,7 +954,7 @@ if __name__ == '__main__':
         test_kullback_regularity_loss = 0.
         test_total_loss = 0.
 
-        if number_of_meshes_test > 1:
+        if number_of_meshes_test > 1 and epoch % print_every_n_iters == 0:
 
             batch_target_splats = splats_test
             if dimension == 2:
@@ -830,7 +974,7 @@ if __name__ == '__main__':
                 batch_target_points = points_test
                 attachment_loss = torch.sum((deformed_template_points - batch_target_points) ** 2) / noise_variance
 
-            elif dataset == 'hippocampi':
+            elif dataset in ['hippocampi', 'surprise']:
                 batch_target_centers = centers_test
                 batch_target_normals = normals_test
                 batch_target_norms = norms_test
@@ -889,14 +1033,6 @@ if __name__ == '__main__':
         template_latent_momenta, _ = model.encode(template_splat.view((1,) + template_splat.size()))
         template_latent_momenta_norm = float(torch.norm(template_latent_momenta[0], p=2).detach().cpu().numpy())
 
-        ##############
-        ### UPDATE ###
-        ##############
-
-        # if epoch > 100000:
-        noise_variance *= train_attachment_loss / (model.template_points.size(0) * dimension)
-        lambda_square = ss_z_var
-
         #############
         ### WRITE ###
         #############
@@ -933,7 +1069,7 @@ if __name__ == '__main__':
                     model.template_connectivity.view((1,) + model.template_connectivity.size()),
                     os.path.join(output_dir, 'epoch_%d__template' % epoch))
 
-            if dataset in ['starmen', 'circles', 'leaves', 'squares']:
+            if dataset in ['starmen', 'circles', 'leaves', 'squares', 'surprise']:
                 model.write_meshes(
                     splats[:n].permute(0, 3, 1, 2), points[:n], connectivities[:n],
                     os.path.join(output_dir, 'epoch_%d__train' % epoch))

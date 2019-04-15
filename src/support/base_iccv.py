@@ -26,30 +26,36 @@ def batched_vector_smoothing(vector, sigma, scaled=True):
     variance = sigma ** 2.
 
     dim = vector.size(1)
+    pads = [[(kernel_size - 1) // 2, kernel_size // 2] for k in range(dim)]
+    pads = [item for sublist in pads for item in sublist]
+
     if dim == 2:
         grid = torch.stack(torch.meshgrid([torch.arange(kernel_size),
                                            torch.arange(kernel_size)]), dim=-1).float().type(str(vector.type()))
-        weights = torch.exp(- torch.sum((grid - mean) ** 2., dim=-1) / (2 * variance))
+        weights = torch.exp(- torch.sum((grid - mean) ** 2., dim=-1) / variance)
         if scaled:
             weights /= torch.sum(weights)
         filter = nn.Conv2d(2, 2, kernel_size, groups=2, bias=False)
         filter.weight.data = weights.view(1, 1, kernel_size, kernel_size).repeat(2, 1, 1, 1)
+        # padded_vector = nn.functional.pad(vector, tuple(pads), mode='reflect')
+        padded_vector = nn.functional.pad(vector, tuple(pads), mode='constant', value=0)
+        # padded_vector = nn.functional.pad(vector, tuple(pads), mode='replicate', value=0)
 
     elif dim == 3:
         grid = torch.stack(torch.meshgrid([torch.arange(kernel_size),
                                            torch.arange(kernel_size),
                                            torch.arange(kernel_size)]), dim=-1).float().type(str(vector.type()))
-        weights = torch.exp(- torch.sum((grid - mean) ** 2., dim=-1) / (2 * variance))
+        weights = torch.exp(- torch.sum((grid - mean) ** 2., dim=-1) / variance)
         if scaled:
             weights /= torch.sum(weights)
         filter = nn.Conv3d(3, 3, kernel_size, groups=3, bias=False)
         filter.weight.data = weights.view(1, 1, kernel_size, kernel_size, kernel_size).repeat(3, 1, 1, 1, 1)
+        padded_vector = nn.functional.pad(vector, tuple(pads), mode='constant', value=0)
 
     else:
         assert False, 'Impossible dimension.'
 
     filter.weight.data.requires_grad_(False)
-    padded_vector = nn.functional.pad(vector, tuple([int(mean) for k in range(dim * 2)]), mode='reflect')
     return filter(padded_vector)
 
 
@@ -89,13 +95,13 @@ def check_and_adapt_kernel_widths(splatting_kernel_width, deformation_kernel_wid
     # Splatting.
     dx_splatting = np.max(bounding_box[:, 1] - bounding_box[:, 0]) / float(splatting_grid_size - 1)
     if dx_splatting <= splatting_kernel_width / 3.:
-        print('>> [OK].      splatting_grid_step = %.2f %% splatting_kernel_width' %
+        print('>> [OK].      splatting_grid_step  = %.2f %% splatting_kernel_width' %
               (100. * dx_splatting / splatting_kernel_width))
     elif dx_splatting > splatting_kernel_width:
-        print('>> [OULALA].  splatting_grid_step = %.2f %% splatting_kernel_width' %
+        print('>> [OULALA].  splatting_grid_step  = %.2f %% splatting_kernel_width' %
               (100. * dx_splatting / splatting_kernel_width))
     else:
-        print('>> [WARNING]. splatting_grid_step = %.2f %% splatting_kernel_width' %
+        print('>> [WARNING]. splatting_grid_step  = %.2f %% splatting_kernel_width' %
               (100. * dx_splatting / splatting_kernel_width))
 
     # Deformation.
@@ -110,7 +116,10 @@ def check_and_adapt_kernel_widths(splatting_kernel_width, deformation_kernel_wid
         print('>> [WARNING]. deformation_grid_step = %.2f %% deformation_kernel_width' %
               (100. * dx_splatting / deformation_kernel_width))
 
-    return splatting_kernel_width, deformation_kernel_width / dx_deformation
+    dkw = deformation_kernel_width / dx_deformation
+    print('>> deformation_kernel_width = %.3f in voxel size' % dkw)
+
+    return splatting_kernel_width, dkw
 
 
 
