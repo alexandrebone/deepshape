@@ -1,19 +1,3 @@
-### Base ###
-import fnmatch
-import math
-import os
-
-### Visualization ###
-import matplotlib.pyplot as plt
-
-### Core ###
-import numpy as np
-import torch
-import torch.nn as nn
-from torch.optim import Adam
-from torch.optim.lr_scheduler import StepLR
-
-### IMPORTS ###
 from support.base_iccv import *
 from in_out.data_iccv import *
 
