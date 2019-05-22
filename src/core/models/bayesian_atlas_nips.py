@@ -33,10 +33,10 @@ if __name__ == '__main__':
     ############################
 
     if dataset == 'mnist':
-        experiment_prefix = '1_debugging'
+        experiment_prefix = '3_atlas'
         output_dir = os.path.join(os.path.dirname(__file__), '../../../examples/mnist', experiment_prefix)
 
-        number_of_images_train = 1
+        number_of_images_train = 160
         number_of_images_test = 0
 
         downsampling_factor = 1
@@ -47,24 +47,24 @@ if __name__ == '__main__':
         latent_dimension__a = 2
 
         kernel_width__s = 5.
-        kernel_width__a = 3.
+        kernel_width__a = 5.
 
         lambda_square__s = 1 ** 2
         lambda_square__a = 1 ** 2
         noise_variance = 1 ** 2
 
-        intensities, intensities_test, intensities_template = load_mnist(
+        intensities, intensities_test, intensities_template, intensities_mean, intensities_std = load_mnist(
             number_of_images_train, number_of_images_test, random_seed=42)
 
         # OPTIMIZATION ------------------------------
-        number_of_epochs = 100
-        print_every_n_iters = 1
-        save_every_n_iters = 1
+        number_of_epochs = 1000
+        print_every_n_iters = 50
+        save_every_n_iters = 250
 
         learning_rate = 1e-3
         learning_rate_ratio = 1.
 
-        batch_size = 1
+        batch_size = 32
 
         device = 'cuda'
         # device = 'cpu'
@@ -97,7 +97,7 @@ if __name__ == '__main__':
 
     if 'cuda' in device:
         model.cuda()
-        model.intensities_template = model.intensities_template.cuda()
+        model.template_intensities = model.template_intensities.cuda()
         intensities = intensities.cuda()
         intensities_test = intensities_test.cuda()
 
@@ -266,31 +266,6 @@ if __name__ == '__main__':
 
             torch.save(model.state_dict(), os.path.join(output_dir, 'epoch_%d__model.pth' % epoch))
 
-            # n = 3
-            # if dataset in ['ellipsoids', 'hippocampi']:
-            #     model.write_meshes(
-            #         splats[:n].permute(0, 4, 1, 2, 3), points[:n], connectivities[:n],
-            #         os.path.join(output_dir, 'epoch_%d__train' % epoch))
-            #     if number_of_meshes_test > 1:
-            #         model.write_meshes(d
-            #             splats_test[:n].permute(0, 4, 1, 2, 3), points_test[:n], connectivities_test[:n],
-            #             os.path.join(output_dir, 'epoch_%d__test' % epoch))
-            #     model.write_meshes(
-            #         template_splat.view((1,) + template_splat.size()),
-            #         model.template_points.view((1,) + model.template_points.size()),
-            #         model.template_connectivity.view((1,) + model.template_connectivity.size()),
-            #         os.path.join(output_dir, 'epoch_%d__template' % epoch))
-            #
-            # if dataset in ['starmen', 'circles', 'leaves', 'squares', 'surprise']:
-            #     model.write_meshes(
-            #         splats[:n].permute(0, 3, 1, 2), points[:n], connectivities[:n],
-            #         os.path.join(output_dir, 'epoch_%d__train' % epoch))
-            #     if number_of_meshes_test > 1:
-            #         model.write_meshes(
-            #             splats_test[:n].permute(0, 3, 1, 2), points_test[:n], connectivities_test[:n],
-            #             os.path.join(output_dir, 'epoch_%d__test' % epoch))
-            #     model.write_meshes(
-            #         template_splat.view((1,) + template_splat.size()),
-            #         model.template_points.view((1,) + model.template_points.size()),
-            #         model.template_connectivity.view((1,) + model.template_connectivity.size()),
-            #         os.path.join(output_dir, 'epoch_%d__template' % epoch))
+            n = 3
+            model.write(intensities[:n], os.path.join(output_dir, 'epoch_%d__train' % epoch),
+                        intensities_mean, intensities_std)

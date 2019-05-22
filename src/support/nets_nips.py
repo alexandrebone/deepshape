@@ -369,3 +369,92 @@ class MetamorphicAtlas(nn.Module):
     #     self.template_points = self.template_points.detach() + update
     #     self.template_points.requires_grad_()
     #     print('template update min = %.3f ; max = %.3f' % (torch.min(update), torch.max(update)))
+
+    def write(self, observations, prefix, mean, std):
+        s, _, a, _ = self.encode(observations)
+
+        # INIT
+        bts = s.size(0)
+        assert bts == a.size(0)
+        ntp = self.number_of_time_points
+        kws = self.kernel_width__s
+        kwa = self.kernel_width__a
+        dim = self.dimension
+        gs = self.grid_size
+        dgs = self.downsampled_grid_size
+        dsf = self.downsampling_factor
+
+        # DECODE
+        # s = z[:, :self.latent_dimension__s]
+        # a = z[:, -self.latent_dimension__a:]
+
+        v_star = self.decoder__s(s)
+        n_star = self.decoder__a(a)
+
+        # GAUSSIAN SMOOTHING
+        v = batched_vector_smoothing(v_star, kws, scaled=False)
+        n = batched_scalar_smoothing(n_star, kwa, scaled=False)
+
+        # NORMALIZE
+        s_norm_squared = torch.sum(s ** 2, dim=1)
+        a_norm_squared = torch.sum(a ** 2, dim=1)
+        v_norm_squared = torch.sum(v * v_star, dim=tuple(range(1, dim + 2)))
+        n_norm_squared = torch.sum(n * n_star, dim=tuple(range(1, dim + 2)))
+        normalizer__s = torch.where(s_norm_squared > 1e-10,
+                                    torch.sqrt(s_norm_squared / v_norm_squared),
+                                    torch.from_numpy(np.array(0.0)).float().type(str(s.type())))
+        normalizer__a = torch.where(a_norm_squared > 1e-10,
+                                    torch.sqrt(a_norm_squared / n_norm_squared),
+                                    torch.from_numpy(np.array(0.0)).float().type(str(a.type())))
+
+        if dim == 2:
+            normalizer__s = normalizer__s.view(bts, 1, 1, 1).expand(v.size())
+            normalizer__a = normalizer__a.view(bts, 1, 1, 1).expand(n.size())
+        elif dim == 3:
+            assert False
+            # normalizer = normalizer.view(bts, 1, 1, 1, 1).expand(v.size())
+        v = v * normalizer__s
+        n = n * normalizer__a
+
+        if self.decode_count < 10:
+            print('>> normalizer shape  = %.3E ; max(abs(v)) = %.3E' %
+                  (normalizer__s.detach().cpu().numpy().reshape(-1)[0], np.max(np.abs(v.detach().cpu().numpy()))))
+            print('>> normalizer appea  = %.3E ; max(abs(n)) = %.3E' %
+                  (normalizer__a.detach().cpu().numpy().reshape(-1)[0], np.max(np.abs(n.detach().cpu().numpy()))))
+            self.decode_count += 1
+
+        # FLOW
+        grid = torch.stack(torch.meshgrid(
+            [torch.linspace(0.0, gs - 1.0, dgs),
+             torch.linspace(0.0, gs - 1.0, dgs)])).type(str(s.type())).view(1, 2, dgs, dgs).repeat(bts, 1, 1, 1)
+
+        x = grid.clone() + v / float(2 ** ntp)
+        for t in range(ntp):
+            x += batched_vector_interpolation(x - grid, x, dsf)
+
+        # INTERPOLATE
+        intensities = batched_scalar_interpolation(self.template_intensities + n, x)
+
+        # WRITE
+        images = []
+        for i in range(bts):
+            template = mean + std * self.template_intensities
+            appearance = mean + std * (self.template_intensities + n[i])
+            shape = mean + std * batched_scalar_interpolation(self.template_intensities, x[i].unsqueeze(0))[0]
+            metamorphosis = mean + std * intensities[i]
+            target = mean + std * observations[i]
+
+            images.append(template)
+            images.append(appearance)
+            images.append(shape)
+            images.append(metamorphosis)
+            images.append(target)
+
+            write_image(prefix + '__subject_%d__0__template' % i, template.detach().cpu().numpy())
+            write_image(prefix + '__subject_%d__1__appearance' % i, appearance.detach().cpu().numpy())
+            write_image(prefix + '__subject_%d__2__shape' % i, shape.detach().cpu().numpy())
+            write_image(prefix + '__subject_%d__3__metamorphosis' % i, metamorphosis.detach().cpu().numpy())
+            write_image(prefix + '__subject_%d__4__target' % i, target.detach().cpu().numpy())
+
+        save_image(torch.cat(images).unsqueeze(1), prefix + '__subject_%d__5__reconstructions.pdf' % i,
+                   nrow=bts, normalize=True, range=(0., 255.))

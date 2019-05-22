@@ -44,10 +44,10 @@ def load_mnist(number_of_images_train, number_of_images_test, random_seed=None):
     intensities_test = intensities[number_of_images_train:number_of_images_train + number_of_images_test].unsqueeze(1)
     intensities_template = intensities[-1].unsqueeze(0)
 
-    mean = torch.mean(intensities_train)
-    std = torch.std(intensities_train)
-    intensities_train = (intensities_train - mean) / std
-    intensities_test = (intensities_test - mean) / std
-    intensities_template = (intensities_template - mean) / std
+    intensities_mean = float(torch.mean(intensities_train).detach().cpu().numpy())
+    intensities_std = float(torch.std(intensities_train).detach().cpu().numpy())
+    intensities_train = (intensities_train - intensities_mean) / intensities_std
+    intensities_test = (intensities_test - intensities_mean) / intensities_std
+    intensities_template = (intensities_template - intensities_mean) / intensities_std
 
-    return intensities_train, intensities_test, intensities_template
+    return intensities_train, intensities_test, intensities_template, intensities_mean, intensities_std

@@ -16,8 +16,27 @@ from torch.optim.lr_scheduler import StepLR
 ### Keops ###
 from pykeops.torch import Genred
 
+import nibabel as nib
+import PIL.Image as pimg
+from torchvision.utils import save_image
+
+
 ### VTK ###
 from vtk import vtkPolyData, vtkPoints, vtkDoubleArray, vtkPolyDataWriter
+
+
+def write_image(fn, intensities):
+    tol = 1e-10
+    pimg.fromarray(np.clip(intensities[0], tol, 255.0 - tol).astype('uint8')).save(fn + '.png')
+    # nib.save(nib.Nifti1Image(np.clip(intensities[0], tol, 255.0 - tol).astype('uint8'), np.eye(4)), fn)
+
+
+def write_images(intensities, prefix, suffix, targets=None):
+    for i, intensities_ in enumerate(intensities):
+        write_image('%ssubject_%d%s' % (prefix, i, suffix), intensities_)
+        if targets is not None:
+            write_image('%ssubject_%d%s' % (prefix, i, '__target'), targets[i])
+            write_image('%ssubject_%d%s' % (prefix, i, '__tdiff'), np.abs(intensities_ - targets[i]))
 
 
 def read_vtk_file(filename, dimension=None, extract_connectivity=False):
