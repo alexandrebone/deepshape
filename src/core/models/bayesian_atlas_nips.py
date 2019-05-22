@@ -57,9 +57,9 @@ if __name__ == '__main__':
             number_of_images_train, number_of_images_test, random_seed=42)
 
         # OPTIMIZATION ------------------------------
-        number_of_epochs = 1000
-        print_every_n_iters = 50
-        save_every_n_iters = 250
+        number_of_epochs = 10
+        print_every_n_iters = 1
+        save_every_n_iters = 1
 
         learning_rate = 1e-3
         learning_rate_ratio = 1.

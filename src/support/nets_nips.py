@@ -438,17 +438,19 @@ class MetamorphicAtlas(nn.Module):
         # WRITE
         images = []
         for i in range(bts):
-            template = mean + std * self.template_intensities
+            template = mean + std * self.template_intensities.clone()
             appearance = mean + std * (self.template_intensities + n[i])
             shape = mean + std * batched_scalar_interpolation(self.template_intensities, x[i].unsqueeze(0))[0]
             metamorphosis = mean + std * intensities[i]
             target = mean + std * observations[i]
 
-            images.append(template)
-            images.append(appearance)
-            images.append(shape)
-            images.append(metamorphosis)
-            images.append(target)
+            images_i = []
+            images_i.append(template)
+            images_i.append(appearance)
+            images_i.append(shape)
+            images_i.append(metamorphosis)
+            images_i.append(target)
+            images += images_i
 
             write_image(prefix + '__subject_%d__0__template' % i, template.detach().cpu().numpy())
             write_image(prefix + '__subject_%d__1__appearance' % i, appearance.detach().cpu().numpy())
@@ -456,5 +458,8 @@ class MetamorphicAtlas(nn.Module):
             write_image(prefix + '__subject_%d__3__metamorphosis' % i, metamorphosis.detach().cpu().numpy())
             write_image(prefix + '__subject_%d__4__target' % i, target.detach().cpu().numpy())
 
-        save_image(torch.cat(images).unsqueeze(1), prefix + '__subject_%d__5__reconstructions.pdf' % i,
-                   nrow=bts, normalize=True, range=(0., 255.))
+            save_image(torch.cat(images_i).unsqueeze(1), prefix + '__subject_%d__5__reconstructions.pdf' % i,
+                       nrow=5, normalize=True, range=(0., 255.))
+
+        save_image(torch.cat(images).unsqueeze(1), prefix + '__reconstructions.pdf',
+                   nrow=5, normalize=True, range=(0., 255.))

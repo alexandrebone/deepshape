@@ -221,10 +221,10 @@ def batched_scalar_interpolation(scalars, points):
         u2 = torch.clamp(u1 + 1, 0, gs - 1)
         v2 = torch.clamp(v1 + 1, 0, gs - 1)
 
-        fu = (u - u1)
-        fv = (v - v1)
-        gu = (u1 + 1 - u)
-        gv = (v1 + 1 - v)
+        fu = (u - u1).view(bts, 1, gs, gs)
+        fv = (v - v1).view(bts, 1, gs, gs)
+        gu = (u1 + 1 - u).view(bts, 1, gs, gs)
+        gv = (v1 + 1 - v).view(bts, 1, gs, gs)
 
         u1 = u1.long()
         v1 = v1.long()
