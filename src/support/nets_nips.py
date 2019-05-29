@@ -1,5 +1,6 @@
 from support.base_nips import *
 from in_out.data_nips import *
+from torchvision.utils import save_image
 
 
 class Conv2d_Tanh(nn.Module):
@@ -100,35 +101,109 @@ class Encoder2d(nn.Module):
         return mean__s, logv__s, mean__a, logv__a
 
 
-class Encoder3d(nn.Module):
+class Encoder2d__smaller(nn.Module):
     """
-    in: in_grid_size * in_grid_size * in_grid_size * 3
+    in: in_grid_size * in_grid_size * 2
     out: latent_dimension
     """
 
-    def __init__(self, in_grid_size, latent_dimension, init_var=1.):
+    def __init__(self, in_grid_size, latent_dimension__s, latent_dimension__a, init_var__s=1.0, init_var__a=1.0):
         nn.Module.__init__(self)
         n = int(in_grid_size * 2 ** -4)
-        self.latent_dimension = latent_dimension
-        self.init_var = init_var
-        self.down1 = Conv3d_Tanh(3, 4)
-        self.down2 = Conv3d_Tanh(4, 8)
-        self.down3 = Conv3d_Tanh(8, 16)
-        self.down4 = Conv3d_Tanh(16, 32)
-        # self.down5 = Conv3d_Tanh(32, 32)
-        self.linear1 = nn.Linear(32 * n ** 3, latent_dimension)
-        self.linear2 = nn.Linear(32 * n ** 3, latent_dimension)
-        print('>> Encoder3d has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
+        self.latent_dimension__s = latent_dimension__s
+        self.latent_dimension__a = latent_dimension__a
+        self.init_var__s = init_var__s
+        self.init_var__a = init_var__a
+
+        self.down1 = Conv2d_Tanh(1, 2)
+        self.down2 = Conv2d_Tanh(2, 4)
+        self.down3 = Conv2d_Tanh(4, 8)
+        self.down4 = Conv2d_Tanh(8, 16)
+
+        self.linear_mean_1__s = Linear_Tanh(16 * n * n, 8 * n * n)
+        self.linear_mean_2__s = nn.Linear(8 * n * n, latent_dimension__s)
+        self.linear_logv_1__s = Linear_Tanh(16 * n * n, 8 * n * n)
+        self.linear_logv_2__s = nn.Linear(8 * n * n, latent_dimension__s)
+
+        self.linear_mean_1__a = Linear_Tanh(16 * n * n, 8 * n * n)
+        self.linear_mean_2__a = nn.Linear(8 * n * n, latent_dimension__a)
+        self.linear_logv_1__a = Linear_Tanh(16 * n * n, 8 * n * n)
+        self.linear_logv_2__a = nn.Linear(8 * n * n, latent_dimension__a)
+
+        print('>> Encoder2d__smaller has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
 
     def forward(self, x):
         x = self.down1(x)
         x = self.down2(x)
         x = self.down3(x)
         x = self.down4(x)
-        # x = self.down5(x)
-        m = self.linear1(x.view(x.size(0), -1)).view(x.size(0), -1)
-        s = self.linear2(x.view(x.size(0), -1)).view(x.size(0), -1) + np.log(self.init_var)
-        return m, s
+
+        mean__s = self.linear_mean_2__s(self.linear_mean_1__s(x.view(x.size(0), -1)))
+        logv__s = self.linear_logv_2__s(self.linear_logv_1__s(x.view(x.size(0), -1))) + np.log(self.init_var__s)
+        mean__a = self.linear_mean_2__a(self.linear_mean_1__a(x.view(x.size(0), -1)))
+        logv__a = self.linear_logv_2__a(self.linear_logv_1__a(x.view(x.size(0), -1))) + np.log(self.init_var__a)
+
+        return mean__s, logv__s, mean__a, logv__a
+
+
+class Encoder2d__final(nn.Module):
+    """
+    in: in_grid_size * in_grid_size * 2
+    out: latent_dimension
+    """
+
+    def __init__(self, in_grid_size, latent_dimension__s, latent_dimension__a, init_var__s=1.0, init_var__a=1.0):
+        nn.Module.__init__(self)
+        n = int(in_grid_size * 2 ** -4)
+        self.latent_dimension__s = latent_dimension__s
+        self.latent_dimension__a = latent_dimension__a
+        self.init_var__s = init_var__s
+        self.init_var__a = init_var__a
+
+        self.down1 = Conv2d_Tanh(1, 2)
+        self.down2 = Conv2d_Tanh(2, 4)
+        self.down3 = Conv2d_Tanh(4, 8)
+        self.down4 = Conv2d_Tanh(8, 16)
+
+        self.linear_mean_1__s = Linear_Tanh(16 * n * n, 8 * n * n)
+        self.linear_mean_2__s = nn.Linear(8 * n * n, latent_dimension__s)
+        self.linear_logv_1__s = Linear_Tanh(16 * n * n, 8 * n * n)
+        self.linear_logv_2__s = nn.Linear(8 * n * n, latent_dimension__s)
+
+        self.linear_mean_1__a = Linear_Tanh(16 * n * n, 8 * n * n)
+        self.linear_mean_2__a = nn.Linear(8 * n * n, latent_dimension__a)
+        self.linear_logv_1__a = Linear_Tanh(16 * n * n, 8 * n * n)
+        self.linear_logv_2__a = nn.Linear(8 * n * n, latent_dimension__a)
+
+        # self.down1 = Conv2d_Tanh(1, 4)
+        # self.down2 = Conv2d_Tanh(4, 8)
+        # self.down3 = Conv2d_Tanh(8, 16)
+        # self.down4 = Conv2d_Tanh(16, 32)
+        #
+        # self.linear_mean_1__s = Linear_Tanh(32 * n * n, 16 * n * n)
+        # self.linear_mean_2__s = nn.Linear(16 * n * n, latent_dimension__s)
+        # self.linear_logv_1__s = Linear_Tanh(32 * n * n, 16 * n * n)
+        # self.linear_logv_2__s = nn.Linear(16 * n * n, latent_dimension__s)
+        #
+        # self.linear_mean_1__a = Linear_Tanh(32 * n * n, 16 * n * n)
+        # self.linear_mean_2__a = nn.Linear(16 * n * n, latent_dimension__a)
+        # self.linear_logv_1__a = Linear_Tanh(32 * n * n, 16 * n * n)
+        # self.linear_logv_2__a = nn.Linear(16 * n * n, latent_dimension__a)
+
+        print('>> Encoder2d__final has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
+
+    def forward(self, x):
+        x = self.down1(x)
+        x = self.down2(x)
+        x = self.down3(x)
+        x = self.down4(x)
+
+        mean__s = self.linear_mean_2__s(self.linear_mean_1__s(x.view(x.size(0), -1)))
+        logv__s = self.linear_logv_2__s(self.linear_logv_1__s(x.view(x.size(0), -1))) + np.log(self.init_var__s)
+        mean__a = self.linear_mean_2__a(self.linear_mean_1__a(x.view(x.size(0), -1)))
+        logv__a = self.linear_logv_2__a(self.linear_logv_1__a(x.view(x.size(0), -1))) + np.log(self.init_var__a)
+
+        return mean__s, logv__s, mean__a, logv__a
 
 
 class DeepDecoder2d(nn.Module):
@@ -162,43 +237,67 @@ class DeepDecoder2d(nn.Module):
         return x
 
 
-class DeepDecoder3d(nn.Module):
+class DeepDecoder2d__final(nn.Module):
     """
     in: latent_dimension
-    out: out_grid_size * out_grid_size * out_grid_size * 3
+    out: out_grid_size * out_grid_size * 3
     """
 
-    def __init__(self, latent_dimension, out_grid_size):
+    def __init__(self, latent_dimension, out_channels, out_grid_size):
         nn.Module.__init__(self)
         self.inner_grid_size = int(out_grid_size * 2 ** -4)
         self.latent_dimension = latent_dimension
-        self.linear1 = Linear_Tanh(latent_dimension, 32 * self.inner_grid_size ** 3, bias=False)
-        self.linear2 = Linear_Tanh(32 * self.inner_grid_size ** 3, 32 * self.inner_grid_size ** 3, bias=False)
-        self.linear3 = Linear_Tanh(32 * self.inner_grid_size ** 3, 32 * self.inner_grid_size ** 3, bias=False)
-        # self.up1 = ConvTranspose3d_Tanh(32, 32, bias=False)
-        self.up1 = ConvTranspose3d_Tanh(32, 16, bias=False)
-        self.up2 = ConvTranspose3d_Tanh(16, 8, bias=False)
-        self.up3 = ConvTranspose3d_Tanh(8, 4, bias=False)
-        # self.up4 = nn.ConvTranspose3d(4, 3, kernel_size=2, stride=2, padding=0, bias=False)
-        self.up4 = ConvTranspose3d_Tanh(4, 3, bias=False)
-        print('>> DeepDecoder3d has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
-
-        # self.normalizer = 1.
-        # z = torch.from_numpy(np.array(1.)).float()
-        # m = self.forward(z)
-        # self.normalizer = torch.sqrt(torch.sum(v *, dim=tuple(range(1, dim+2))))
+        self.linear1 = Linear_Tanh(latent_dimension, 16 * self.inner_grid_size ** 2, bias=False)
+        self.linear2 = Linear_Tanh(16 * self.inner_grid_size ** 2, 32 * self.inner_grid_size ** 2, bias=False)
+        # self.linear3 = Linear_Tanh(16 * self.inner_grid_size ** 2, 16 * self.inner_grid_size ** 2, bias=False)
+        self.up1 = ConvTranspose2d_Tanh(32, 16, bias=False)
+        self.up2 = ConvTranspose2d_Tanh(16, 8, bias=False)
+        self.up3 = ConvTranspose2d_Tanh(8, 4, bias=False)
+        self.up4 = ConvTranspose2d_Tanh(4, out_channels, bias=False)
+        print('>> DeepDecoder2d__final has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
 
     def forward(self, x):
         batch_size = x.size(0)
         x = self.linear1(x)
-        x = self.linear2(x)
-        x = self.linear3(x).view(batch_size, 32, self.inner_grid_size, self.inner_grid_size, self.inner_grid_size)
+        x = self.linear2(x).view(batch_size, 32, self.inner_grid_size, self.inner_grid_size)
+        # x = self.linear3(x).view(batch_size, 16, self.inner_grid_size, self.inner_grid_size)
         x = self.up1(x)
         x = self.up2(x)
         x = self.up3(x)
         x = self.up4(x)
-        # x = self.up5(x)
         return x
+
+
+class DeepDecoder2d__smaller(nn.Module):
+    """
+    in: latent_dimension
+    out: out_grid_size * out_grid_size * 3
+    """
+
+    def __init__(self, latent_dimension, out_channels, out_grid_size):
+        nn.Module.__init__(self)
+        self.inner_grid_size = int(out_grid_size * 2 ** -4)
+        self.latent_dimension = latent_dimension
+        self.linear1 = Linear_Tanh(latent_dimension, 16 * self.inner_grid_size ** 2, bias=False)
+        self.linear2 = Linear_Tanh(16 * self.inner_grid_size ** 2, 16 * self.inner_grid_size ** 2, bias=False)
+        # self.linear3 = Linear_Tanh(16 * self.inner_grid_size ** 2, 16 * self.inner_grid_size ** 2, bias=False)
+        self.up1 = ConvTranspose2d_Tanh(16, 8, bias=False)
+        self.up2 = ConvTranspose2d_Tanh(8, 4, bias=False)
+        self.up3 = ConvTranspose2d_Tanh(4, 2, bias=False)
+        self.up4 = ConvTranspose2d_Tanh(2, out_channels, bias=False)
+        print('>> DeepDecoder2d__smaller has {} parameters'.format(sum([len(elt.view(-1)) for elt in self.parameters()])))
+
+    def forward(self, x):
+        batch_size = x.size(0)
+        x = self.linear1(x)
+        x = self.linear2(x).view(batch_size, 16, self.inner_grid_size, self.inner_grid_size)
+        # x = self.linear3(x).view(batch_size, 16, self.inner_grid_size, self.inner_grid_size)
+        x = self.up1(x)
+        x = self.up2(x)
+        x = self.up3(x)
+        x = self.up4(x)
+        return x
+
 
 
 class MetamorphicAtlas(nn.Module):
@@ -232,11 +331,11 @@ class MetamorphicAtlas(nn.Module):
             template_intensities.size(1), self.dimension, template_intensities.view(-1).size(0)))
 
         if self.dimension == 2:
-            self.encoder = Encoder2d(self.grid_size, latent_dimension__s, latent_dimension__a,
-                                     init_var__s=(initial_lambda_square__s / np.sqrt(latent_dimension__s)),
-                                     init_var__a=(initial_lambda_square__a / np.sqrt(latent_dimension__a)))
-            self.decoder__s = DeepDecoder2d(latent_dimension__s, 2, self.downsampled_grid_size)
-            self.decoder__a = DeepDecoder2d(latent_dimension__a, 1, self.grid_size)
+            self.encoder = Encoder2d__final(self.grid_size, latent_dimension__s, latent_dimension__a,
+                                              init_var__s=(initial_lambda_square__s / np.sqrt(latent_dimension__s)),
+                                              init_var__a=(initial_lambda_square__a / np.sqrt(latent_dimension__a)))
+            self.decoder__s = DeepDecoder2d__final(latent_dimension__s, 2, self.downsampled_grid_size)
+            self.decoder__a = DeepDecoder2d__final(latent_dimension__a, 1, self.grid_size)
 
         elif self.dimension == 3:
             assert False
@@ -321,6 +420,7 @@ class MetamorphicAtlas(nn.Module):
 
         # INTERPOLATE
         intensities = batched_scalar_interpolation(self.template_intensities + n, x)
+        # intensities = batched_scalar_interpolation(self.template_intensities + n * 0, x)
 
         return intensities
 
@@ -328,36 +428,12 @@ class MetamorphicAtlas(nn.Module):
         # print('>> Please avoid this forward method.')
         return self.decode(s, a)
 
-    def tamper_template_gradient(self, lr, print_info=False):
+    def tamper_template_gradient(self, kw, lr, print_info=False):
         pass
 
-        # template_gradient = self.template_points.grad.detach()
-        #
-        # norms = torch.sqrt(torch.sum(template_gradient ** 2, dim=1))
-        # std_robust = 1.4826 * torch.median(torch.abs(norms - torch.median(norms)))
-        #
-        # cutoff_factor = 2.5
-        # threshold = torch.median(norms) + cutoff_factor * std_robust
-        # norms = norms.contiguous().view(-1, 1).expand(template_gradient.size())
-        # cutoff_template_gradient = torch.where(
-        #     norms > threshold,
-        #     cutoff_factor * std_robust * template_gradient / norms,
-        #     template_gradient)
-        #
-        # tampered_template_gradient = lr * convolve(
-        #     self.template_points.detach(), self.template_points.detach(), cutoff_template_gradient, torch.sqrt(1/gamma))
-        # # tampered_template_gradient = (lr * kernel(gamma, cutoff_template_gradient, self.template_points.detach(),
-        # #                                           self.template_points.grad.detach())).detach()
-        #
-        # # write_gradient('grad.vtk', template_gradient, self.template_points.detach())
-        # # write_gradient('grad_normalized.vtk', template_gradient / norms, self.template_points.detach())
-        # # write_gradient('grad_cutoff.vtk', cutoff_template_gradient, self.template_points.detach())
-        # # write_gradient('grad_smoothed.vtk', tampered_template_gradient, self.template_points.detach())
-        #
-        # if zero:
-        #     self.template_points.grad = tampered_template_gradient * 0.0
-        # else:
-        #     self.template_points.grad = tampered_template_gradient
+        # tampered_template_gradient = (lr * batched_scalar_smoothing(
+        #     self.template_intensities.grad.detach().unsqueeze(0), kw)[0])
+        # self.template_intensities.grad = tampered_template_gradient
         #
         # if print_info:
         #     print('tampered template gradient max absolute value = %.3f' %
@@ -436,30 +512,28 @@ class MetamorphicAtlas(nn.Module):
         intensities = batched_scalar_interpolation(self.template_intensities + n, x)
 
         # WRITE
+        template = mean + std * self.template_intensities.clone()
+        # write_image(prefix + '__template', template.detach().cpu().numpy())
+
         images = []
         for i in range(bts):
-            template = mean + std * self.template_intensities.clone()
             appearance = mean + std * (self.template_intensities + n[i])
             shape = mean + std * batched_scalar_interpolation(self.template_intensities, x[i].unsqueeze(0))[0]
             metamorphosis = mean + std * intensities[i]
             target = mean + std * observations[i]
 
-            images_i = []
-            images_i.append(template)
-            images_i.append(appearance)
-            images_i.append(shape)
-            images_i.append(metamorphosis)
-            images_i.append(target)
+            images_i = [template, appearance, shape, metamorphosis, target]
             images += images_i
 
-            write_image(prefix + '__subject_%d__0__template' % i, template.detach().cpu().numpy())
-            write_image(prefix + '__subject_%d__1__appearance' % i, appearance.detach().cpu().numpy())
-            write_image(prefix + '__subject_%d__2__shape' % i, shape.detach().cpu().numpy())
-            write_image(prefix + '__subject_%d__3__metamorphosis' % i, metamorphosis.detach().cpu().numpy())
-            write_image(prefix + '__subject_%d__4__target' % i, target.detach().cpu().numpy())
+            # write_image(prefix + '__subject_%d__0__template' % i, template.detach().cpu().numpy())
+            # write_image(prefix + '__subject_%d__1__appearance' % i, appearance.detach().cpu().numpy())
+            # write_image(prefix + '__subject_%d__2__shape' % i, shape.detach().cpu().numpy())
+            # write_image(prefix + '__subject_%d__3__metamorphosis' % i, metamorphosis.detach().cpu().numpy())
+            # write_image(prefix + '__subject_%d__4__target' % i, target.detach().cpu().numpy())
+            #
+            # save_image(torch.cat(images_i).unsqueeze(1), prefix + '__subject_%d__5__reconstructions.pdf' % i,
+            #            nrow=5, normalize=True, range=(0., 255.))
 
-            save_image(torch.cat(images_i).unsqueeze(1), prefix + '__subject_%d__5__reconstructions.pdf' % i,
-                       nrow=5, normalize=True, range=(0., 255.))
-
-        save_image(torch.cat(images).unsqueeze(1), prefix + '__reconstructions.pdf',
-                   nrow=5, normalize=True, range=(0., 255.))
+        images = torch.cat(images)
+        save_image(images.unsqueeze(1), prefix + '__reconstructions.pdf',
+                   nrow=5, normalize=True, range=(0., float(torch.max(images).detach().cpu().numpy())))

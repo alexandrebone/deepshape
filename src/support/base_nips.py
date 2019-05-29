@@ -1,15 +1,6 @@
 ### Core ###
-import numpy as np
 import torch
 import torch.nn as nn
-from torch.optim import Adam
-from torch.optim.lr_scheduler import StepLR
-
-### Keops ###
-from pykeops.torch import Genred
-
-### VTK ###
-from vtk import vtkPolyData, vtkPoints, vtkDoubleArray, vtkPolyDataWriter
 
 
 def cprint(str):

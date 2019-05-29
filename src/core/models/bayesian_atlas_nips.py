@@ -26,6 +26,8 @@ if __name__ == '__main__':
 
     # MODEL
     dataset = 'mnist'
+    # dataset = 'brains'
+
     print('>> Run with the [ %s ] dataset.' % dataset)
 
     ############################
@@ -33,10 +35,12 @@ if __name__ == '__main__':
     ############################
 
     if dataset == 'mnist':
-        experiment_prefix = '3_atlas'
+        experiment_prefix = '7_atlas__digit_8__ter'
         output_dir = os.path.join(os.path.dirname(__file__), '../../../examples/mnist', experiment_prefix)
 
-        number_of_images_train = 160
+        digit = 8
+
+        number_of_images_train = 320
         number_of_images_test = 0
 
         downsampling_factor = 1
@@ -47,24 +51,64 @@ if __name__ == '__main__':
         latent_dimension__a = 2
 
         kernel_width__s = 5.
-        kernel_width__a = 5.
+        kernel_width__a = 2.5
 
-        lambda_square__s = 1 ** 2
-        lambda_square__a = 1 ** 2
-        noise_variance = 1 ** 2
+        lambda_square__s = 0.8 ** 2
+        lambda_square__a = 0.4 ** 2
+        noise_variance = 0.1 ** 2
 
         intensities, intensities_test, intensities_template, intensities_mean, intensities_std = load_mnist(
+            number_of_images_train, number_of_images_test, digit, random_seed=42)
+
+        # OPTIMIZATION ------------------------------
+        number_of_epochs = 10000
+        print_every_n_iters = 100
+        save_every_n_iters = 1000
+
+        learning_rate = 1e-3
+        learning_rate_ratio = 1
+
+        batch_size = min(64, number_of_images_train)
+
+        device = 'cuda'
+        # device = 'cpu'
+        # -------------------------------------------
+
+    elif dataset == 'brains':
+        experiment_prefix = '5_atlas__latent_10_5__SVF'
+
+        output_dir = os.path.join(os.path.dirname(__file__), '../../../examples/brains', experiment_prefix)
+
+        number_of_images_train = 320
+        number_of_images_test = 0
+
+        downsampling_factor = 2
+        number_of_time_points = 5
+
+        dimension = 2
+        latent_dimension__s = 10
+        latent_dimension__a = 5
+
+        kernel_width__s = 5
+        kernel_width__a = 2.5
+
+        lambda_square__s = 10 ** 2
+        lambda_square__a = 10 ** 2
+        noise_variance = 0.1 ** 2
+
+        (intensities, intensities_test, intensities_template,
+         intensities_mean, intensities_std) = create_cross_sectional_brains_dataset__128(
             number_of_images_train, number_of_images_test, random_seed=42)
 
         # OPTIMIZATION ------------------------------
-        number_of_epochs = 10
-        print_every_n_iters = 1
-        save_every_n_iters = 1
+        number_of_epochs = 10000
+        print_every_n_iters = 100
+        save_every_n_iters = 1000
 
         learning_rate = 1e-3
-        learning_rate_ratio = 1.
+        learning_rate_ratio = 1
 
-        batch_size = 32
+        batch_size = min(64, number_of_images_train)
 
         device = 'cuda'
         # device = 'cpu'
@@ -163,7 +207,7 @@ if __name__ == '__main__':
             # GRADIENT STEP
             optimizer.zero_grad()
             total_loss.backward()
-            # model.tamper_template_gradient(gkernel, gamma_deformation / 3.5 ** 2, learning_rate_ratio, epoch < 5)
+            # model.tamper_template_gradient(kernel_width__a / 2., learning_rate_ratio, epoch < 10)
             optimizer.step()
             # model.update_template(gkernel, gamma_splatting, learning_rate_ratio * list(optimizer.param_groups)[0]['lr'])
 
@@ -180,10 +224,11 @@ if __name__ == '__main__':
             ss_a_mean /= float(batch_size)
             ss_a_var /= float(batch_size)
 
-            if epoch > 1000:
-                noise_variance *= train_attachment_loss / float(noise_dimension)
-                lambda_square__s = ss_s_var
-                lambda_square__a = ss_a_var
+            if epoch > 5000:
+            # if epoch > 0:
+                noise_variance *= float(train_attachment_loss / float(noise_dimension))
+                lambda_square__s = float(ss_s_var)
+                lambda_square__a = float(ss_a_var)
 
 
         ############
@@ -266,6 +311,6 @@ if __name__ == '__main__':
 
             torch.save(model.state_dict(), os.path.join(output_dir, 'epoch_%d__model.pth' % epoch))
 
-            n = 3
+            n = 5
             model.write(intensities[:n], os.path.join(output_dir, 'epoch_%d__train' % epoch),
                         intensities_mean, intensities_std)
