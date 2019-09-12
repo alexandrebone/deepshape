@@ -18,8 +18,6 @@ from in_out.datasets_medima import *
 from support.nets_medima import BayesianAtlas
 from support.base_medima import *
 
-
-
 if __name__ == '__main__':
 
     ############################
@@ -64,6 +62,7 @@ if __name__ == '__main__':
     number_of_epochs = 100
     number_of_epochs_for_init = 1000
     number_of_epochs_for_warm_up = 0
+    number_of_epochs_for_cool_down = 0
     print_every_n_iters = 1
     save_every_n_iters = 100
 
@@ -86,7 +85,8 @@ if __name__ == '__main__':
         experiment_prefix = '101__debugging'
         path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data'))
 
-        initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/starmen/data/SimulatedData__EstimatedParameters__Template_starman__tp_22__age_70.00.vtk'))
+        initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__),
+                                                            '../../../examples/starmen/data/SimulatedData__EstimatedParameters__Template_starman__tp_22__age_70.00.vtk'))
         # initialize_encoder = os.path.join(path_to_meshes, 'PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt')
         # initialize_decoder = os.path.join(path_to_meshes, 'latent_positions.txt')
 
@@ -262,7 +262,8 @@ if __name__ == '__main__':
     elif dataset == 'hippocampi':
         experiment_prefix = '3__zero_padding__q_20'
 
-        path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/hippocampi/data_organized'))
+        path_to_meshes = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), '../../../examples/hippocampi/data_organized'))
 
         initialize_template = os.path.join(path_to_meshes, '../data',
                                            'PrincipalGeodesicAnalysis__EstimatedParameters__Template_hippocampus.vtk')
@@ -271,7 +272,8 @@ if __name__ == '__main__':
         # initialize_decoder = os.path.join(path_to_meshes,
         #                                   'PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt')
 
-        initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/hippocampi/output__2_subject_selection__q_20/epoch_1000__model.pth'))
+        initial_state = os.path.normpath(os.path.join(os.path.dirname(__file__),
+                                                      '../../../examples/hippocampi/output__2_subject_selection__q_20/epoch_1000__model.pth'))
         # initial_encoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_encoder__epoch_9000__model.pth'))
         # initial_decoder_state = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/output__2_bayesian_atlas_fourier__latent_space_2__64_subjects__lambda_10__alpha_0.5__init/init_decoder__epoch_4000__model.pth'))
 
@@ -345,14 +347,14 @@ if __name__ == '__main__':
         # ----------------------------
 
     elif dataset == 'squares':
-        experiment_prefix = '101__old_template_init__gpu'
+        experiment_prefix = '103__kernel_0.25'
 
         path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/squares/data'))
 
-        initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__),
-                                                            '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__Template_square.vtk'))
         # initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__),
-        #                                                     '../../../examples/squares/data/for_initialization__square_mean.vtk'))
+        #                                                     '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__Template_square.vtk'))
+        initialize_template = os.path.normpath(os.path.join(os.path.dirname(__file__),
+                                                            '../../../examples/squares/data/for_initialization__square_mean.vtk'))
         # initialize_encoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
         #                                                    '../../../examples/squares/data/PrincipalGeodesicAnalysis__EstimatedParameters__LatentPositions.txt'))
         # initialize_decoder = os.path.normpath(os.path.join(os.path.dirname(__file__),
@@ -379,11 +381,11 @@ if __name__ == '__main__':
         latent_dimension = 2
 
         # deformation_kernel_width = 5.
-        deformation_kernel_width = 0.5
+        deformation_kernel_width = 0.25
         splatting_kernel_width = 0.2
 
         noise_variance = 0.01 ** 2
-        lambda_square = 1. ** 2
+        lambda_square = 0.05 ** 2
 
         gamma_splatting = torch.from_numpy(np.array([1. / splatting_kernel_width ** 2.])).float()
         gamma_deformation = torch.from_numpy(np.array([1. / deformation_kernel_width ** 2.])).float()
@@ -413,8 +415,9 @@ if __name__ == '__main__':
 
         # OPTIMIZATION --------------
         number_of_epochs = 10000
-        number_of_epochs_for_init = 25000
-        number_of_epochs_for_warm_up = 0
+        number_of_epochs_for_init = 0
+        number_of_epochs_for_warm_up = 1000
+        number_of_epochs_for_cool_down = 1000
         print_every_n_iters = 100
         save_every_n_iters = 500
 
@@ -431,7 +434,8 @@ if __name__ == '__main__':
     elif dataset == 'surprise':
         experiment_prefix = '101__debugging'
 
-        path_to_meshes = os.path.normpath(os.path.join(os.path.dirname(__file__), '../../../examples/surprise/data_no_cheek'))
+        path_to_meshes = os.path.normpath(
+            os.path.join(os.path.dirname(__file__), '../../../examples/surprise/data_no_cheek'))
 
         initialize_template = os.path.normpath(os.path.join(
             os.path.dirname(__file__),
@@ -467,7 +471,6 @@ if __name__ == '__main__':
         print('>> Gaussian kernel formula: %s' % gkernel.formula)
         print('>> Varifold kernel formula: %s' % vkernel.formula)
 
-
         # bounding_box = torch.from_numpy(np.array([[-1., 1.], [-1., 1.]])).float()
         # bounding_box = torch.from_numpy(np.array([[-0.225, 0.225], [-0.25, 0.2]])).float()
         bounding_box = torch.from_numpy(np.array([[-0.15, 0.15], [-0.17, 0.13]])).float()
@@ -481,7 +484,8 @@ if __name__ == '__main__':
         deformation_grid = compute_grid(bounding_box, margin=0., grid_size=deformation_grid_size)
 
         (points, connectivities, centers, normals, norms, splats,
-         points_test, connectivities_test, centers_test, normals_test, norms_test, splats_test) = create_cross_sectional_surprise_dataset(
+         points_test, connectivities_test, centers_test, normals_test, norms_test,
+         splats_test) = create_cross_sectional_surprise_dataset(
             os.path.normpath(os.path.join(os.path.dirname(__file__), path_to_meshes)),
             number_of_meshes_train, number_of_meshes_test,
             splatting_grid, dimension, gkernel, gamma_splatting, random_seed=42)
@@ -507,6 +511,7 @@ if __name__ == '__main__':
         raise RuntimeError
 
     assert number_of_time_points > 1
+    assert number_of_epochs_for_warm_up + number_of_epochs_for_cool_down <= number_of_epochs
 
     log = ''
     output_dir = os.path.join(path_to_meshes, '../output__' + experiment_prefix)
@@ -590,7 +595,6 @@ if __name__ == '__main__':
     #     # connectivities_test = torch.stack(connectivities_test)
     #
     #     noise_dimension = model.template_points.size(0) * dimension
-
 
     else:
         raise RuntimeError
@@ -920,13 +924,10 @@ if __name__ == '__main__':
             # GRADIENT STEP
             optimizer.zero_grad()
             total_loss.backward()
-            if dataset == 'surprise':
-                # model.tamper_template_gradient(gkernel, 2. * gamma_deformation, learning_rate_ratio, epoch < 5, epoch < 1000)
-                model.tamper_template_gradient(gkernel, gamma_deformation / 3.5 ** 2, learning_rate_ratio, epoch < 5)
-            # elif dataset == 'squares':
-            #     model.tamper_template_gradient(gkernel, gamma_deformation, learning_rate_ratio, epoch < 5)
-            else:
-                model.tamper_template_gradient(gkernel, gamma_deformation, learning_rate_ratio, epoch < 5)
+            model.tamper_template_gradient(
+                gkernel, gamma_deformation, learning_rate_ratio,
+                print_info=(number_of_epochs_for_warm_up < epoch < number_of_epochs_for_warm_up + 5),
+                freeze=(epoch <= number_of_epochs_for_warm_up))
             optimizer.step()
             # model.update_template(gkernel, gamma_splatting, learning_rate_ratio * list(optimizer.param_groups)[0]['lr'])
 
@@ -940,11 +941,14 @@ if __name__ == '__main__':
             ss_z_mean /= float(batch_size)
             ss_z_var /= float(batch_size)
 
-            if dataset == 'surprise':
-                if epoch > 1000:
-                    noise_variance *= train_attachment_loss / float(noise_dimension)
-                    lambda_square = ss_z_var
-            else:
+            if epoch > number_of_epochs_for_warm_up:
+
+                if epoch > number_of_epochs - number_of_epochs_for_cool_down:
+                    kk = epoch - number_of_epochs + number_of_epochs_for_cool_down
+                    rho = kk ** (- np.log(0.01) / np.log(number_of_epochs_for_cool_down))
+                    noise_variance = rho * train_attachment_loss / float(noise_dimension) + (1 - rho) * noise_variance
+                    lambda_square += rho * (ss_z_var - lambda_square)
+
                 noise_variance *= train_attachment_loss / float(noise_dimension)
                 lambda_square = ss_z_var
 

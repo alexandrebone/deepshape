@@ -256,7 +256,8 @@ class BayesianAtlas(nn.Module):
         m_svf = self.decoder_svf(z)
         m_t = []
         for t in range(ntp - 1):
-            m_dvf = self.decoder_dvf(z * (t + 1) * self.dt)
+            # m_dvf = self.decoder_dvf(z * (t + 1) * self.dt)
+            m_dvf = self.decoder_dvf(z * t * self.dt)
             m_t.append(m_svf + m_dvf)
 
         # GAUSSIAN SMOOTHING
@@ -294,11 +295,12 @@ class BayesianAtlas(nn.Module):
         # print('>> Please avoid this forward method.')
         return self.decode(z)
 
-    def tamper_template_gradient(self, kernel, gamma, lr, print_info=False):
+    def tamper_template_gradient(self, kernel, gamma, lr, print_info=False, freeze=False):
         # pass
         tampered_template_gradient = (lr * kernel(gamma, self.template_points.detach(), self.template_points.detach(),
                                                   self.template_points.grad.detach())).detach()
-        self.template_points.grad = tampered_template_gradient
+        if freeze: self.template_points.grad = tampered_template_gradient * 0.0
+        else: self.template_points.grad = tampered_template_gradient
         if print_info:
             print('tampered template gradient max absolute value = %.3f' %
                   torch.max(torch.abs(tampered_template_gradient)))
@@ -316,7 +318,8 @@ class BayesianAtlas(nn.Module):
         m_svf = self.decoder_svf(z)
         m_t = []
         for t in range(ntp - 1):
-            m_dvf = self.decoder_dvf(z * (t + 1) * self.dt)
+            # m_dvf = self.decoder_dvf(z * (t + 1) * self.dt)
+            m_dvf = self.decoder_dvf(z * t * self.dt)
             m_t.append(m_svf + m_dvf)
 
         # GAUSSIAN SMOOTHING
