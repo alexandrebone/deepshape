@@ -311,11 +311,11 @@ if __name__ == '__main__':
             optimizer_without_template.zero_grad()
             total_loss.backward()
             if epoch > int(number_of_epochs * 0.5):
-                optimizer_without_template.step()
-                # optimizer.step()
+                # optimizer_without_template.step()
+                optimizer.step()
             else:
-                optimizer_without_template.step()
-                # optimizer.step()
+                # optimizer_without_template.step()
+                optimizer.step()
 
             # model.tamper_template_gradient(kernel_width__a / 2., learning_rate_ratio, epoch < 10)
             # model.update_template(gkernel, gamma_splatting, learning_rate_ratio * list(optimizer.param_groups)[0]['lr'])

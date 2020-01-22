@@ -146,10 +146,10 @@ def load_eyes_black(number_of_images_train, number_of_images_test, random_seed=N
     intensities_test = intensities_test[:number_of_images_test]
 
     # Finalize
-    # intensities_template = torch.mean(intensities_train, dim=0)
-    intensities_template = torch.from_numpy(np.array(pimg.open(
-        os.path.join(os.path.dirname(path_to_train), 'rectified_template.png')
-    ))).float()
+    intensities_template = torch.mean(intensities_train, dim=0)
+    # intensities_template = torch.from_numpy(np.array(pimg.open(
+    #     os.path.join(os.path.dirname(path_to_train), 'rectified_template.png')
+    # ))).float()
 
     intensities_mean = float(torch.mean(intensities_train).detach().cpu().numpy())
     intensities_std = float(torch.std(intensities_train).detach().cpu().numpy())
